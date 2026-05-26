@@ -429,7 +429,7 @@ def build_image(content: dict, today: datetime) -> bytes:
            残りが3文字以下になる場合は折り返しを見送り、次の区切りまで待つ（「ね。」「す。」防止）
         """
         HARD = frozenset("。、")
-        SOFT = frozenset("でにをがはと")
+        SOFT = frozenset("にをがはと")  # 「で」は複合語(できる/ている等)の途中になりやすいため除外
         half_w = max_w * 0.40
         MIN_REMAIN = 4
 
