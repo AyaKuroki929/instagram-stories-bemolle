@@ -463,7 +463,15 @@ def build_image(content: dict, today: datetime) -> bytes:
 
         if line:
             lines.append(line)
-        return lines
+
+        # 短すぎる末尾行（MIN_REMAIN未満）を前行にマージ（「す。」「ね。」防止）
+        merged = []
+        for ln in lines:
+            if merged and len(ln) < MIN_REMAIN:
+                merged[-1] = merged[-1] + ln
+            else:
+                merged.append(ln)
+        return merged
 
     def draw_block(text: str, font: ImageFont.FreeTypeFont, color: tuple,
                    y: int, max_w: int) -> int:
@@ -527,7 +535,8 @@ def post_to_stories(ig_user_id: str, image_url: str) -> str:
         "media_type": "STORIES",
         "access_token": META_TOKEN,
     }, timeout=30)
-    r.raise_for_status()
+    if not r.ok:
+        raise Exception(f"{r.status_code} {r.text[:400]}")
     creation_id = r.json()["id"]
 
     # Instagramのコンテナ処理完了を待つ（最大60秒）
