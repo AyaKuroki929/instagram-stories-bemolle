@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""@bemolle_diet Instagram Stories 自動投稿"""
+"""@bemolle_diet Instagram Stories 自動投稿（1枚目）"""
 from __future__ import annotations
 
 import base64
 import json
 import os
+import random
 import sys
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
@@ -26,6 +27,10 @@ FONT_PATHS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf",
     "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
 ]
+
+COURSES_SLIM  = ["全身痩身12回コース", "全身痩身18回コース", "全身痩身24回コース"]
+COURSES_FACIAL = ["３ヶ月肌質改善プログラム", "６ヶ月肌質改善プログラム"]
+COURSES_TRIAL  = ["全身痩身体験", "肌質改善体験"]
 
 
 def get_font(size: int) -> ImageFont.FreeTypeFont:
@@ -49,45 +54,79 @@ def get_ig_user_id() -> str:
     raise RuntimeError(f"@{IG_USERNAME} がFacebookページに連携されていません")
 
 
-# ── 2. Gemini Flash でストーリー内容を生成 ─────────────────────
+# ── 2. Gemini Flash でストーリー1枚目を生成 ───────────────────
 def generate_content(today: datetime) -> dict:
+    month  = today.month
+    day    = today.day
     weekday = ["月", "火", "水", "木", "金", "土", "日"][today.weekday()]
 
-    prompt = f"""あなたはInstagramストーリーライターです。
-大阪のボディケアサロン「ベモーレ」（@bemolle_diet）向けに今日のストーリー文を作成します。
+    # 季節
+    if month in (12, 1, 2):   season = "冬"
+    elif month in (3, 4, 5):  season = "春"
+    elif month in (6, 7, 8):  season = "夏"
+    else:                      season = "秋"
 
-今日：{today.month}月{today.day}日（{weekday}曜日）
-ターゲット：40〜50代女性
-特徴：痩身・ボディケア専門、完全予約制、大阪、平日9:30〜18:00
+    # コース候補をランダムに2〜3個（痩身と肌質改善が偏らないように）
+    slim_pick   = random.sample(COURSES_SLIM, k=random.randint(1, 2))
+    facial_pick = random.sample(COURSES_FACIAL, k=1)
+    # 8割で満席→新規含む日は体験コースも混ぜる
+    include_new = random.random() < 0.4
+    if include_new:
+        trial_pick = [random.choice(COURSES_TRIAL)]
+        course_pool = trial_pick + slim_pick[:1] + facial_pick[:1]
+    else:
+        course_pool = slim_pick + facial_pick
 
-以下のJSONのみ出力（他は一切不要）：
+    courses_str = "\n".join(f"・{c}" for c in course_pool)
+
+    prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
+以下のルールに従い、今日のInstagramストーリー1枚目の文章をJSONで出力してください。
+
+今日：{month}月{day}日（{weekday}曜日）・{season}
+
+【1枚目の構成ルール】
+① 朝の挨拶（短く自然に）
+② 本日の状況（以下3パターンからランダムで、満席表現が8割に来るように）
+  - 「本日もリピーター様、ご新規様で満席となっております。」
+  - 「本日もリピーター様で満席となっております。」
+  - 「本日もリピーター様、ご新規様にお越しいただきます。」
+③ ご来店を心待ちにしていることが伝わる一言（季節・天気・気遣いなど、毎回変える）
+
+今日のコース（以下をそのまま使う）：
+{courses_str}
+
+【文章ルール（最重要）】
+・「ベモーレ」はカタカナ表記のみ（Bemolleは使わない）
+・AIっぽい整いすぎた文章は禁止
+・実際に黒木（オーナー）がそのまま投稿しても違和感ない温度感
+・敬語ベースで柔らかく、現場で話している感じ
+・一文に緩急をつける（短文と中文を混ぜる）
+・誇張表現禁止・無駄な修飾語を削る
+・感情は控えめに乗せる（安心・共感・寄り添い）
+・整いすぎていたらあえて崩す
+
+以下のJSONのみ出力（他は不要）：
 {{
-  "theme": "今日のテーマ（例：月曜日のリセット）",
-  "main_text": "メイン文（30〜50文字、改行は\\nで）",
-  "sub_text": "サブ文（20〜30文字）",
-  "cta": "行動喚起（20文字以内、例：プロフィールから予約を）"
-}}
-
-ルール：
-- 「うち」禁止→「ベモーレ」「当サロン」を使う
-- 敬語ベース・自然な話し言葉
-- 「あなた専用」「カスタム」禁止
-- 夜・週末営業の表現禁止
-- 曜日・季節にあったテーマで"""
+  "greeting": "朝の挨拶（1〜2文）",
+  "status": "本日の状況（上記3パターンのいずれか）",
+  "closing": "心待ちにしている一言（季節・気遣い含む、1文）"
+}}"""
 
     r = requests.post(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent",
         params={"key": GEMINI_KEY},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.8},
+            "generationConfig": {"temperature": 0.9},
         },
         timeout=30,
     )
     r.raise_for_status()
     raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
     start, end = raw.find("{"), raw.rfind("}") + 1
-    return json.loads(raw[start:end])
+    result = json.loads(raw[start:end])
+    result["courses"] = course_pool
+    return result
 
 
 # ── 3. Pillow で画像生成（1080×1920） ─────────────────────────
@@ -107,72 +146,91 @@ def build_image(content: dict, today: datetime) -> bytes:
     accent    = (172, 108, 108)
     text_dark = (58, 38, 38)
     text_mid  = (110, 75, 75)
+    divider_color = (200, 160, 160)
 
-    # ロゴ
-    logo_font = get_font(76)
-    draw.text((W // 2, 190), "bemolle", font=logo_font, fill=accent, anchor="mm")
+    pad = 80  # 左右余白
 
-    # 装飾ライン
-    lw = 260
-    draw.line([(W//2 - lw, 252), (W//2 + lw, 252)], fill=accent, width=2)
+    def draw_divider(y: int) -> None:
+        draw.line([(pad, y), (W - pad, y)], fill=divider_color, width=1)
 
-    # 日付
-    date_font = get_font(38)
+    def draw_text_wrapped(text: str, font: ImageFont.FreeTypeFont,
+                           color: tuple, y: int, max_width: int) -> int:
+        """テキストを折り返してy座標を返す（終端y）"""
+        lines, line = [], ""
+        for ch in text:
+            test = line + ch
+            bbox = font.getbbox(test)
+            if bbox[2] > max_width and line:
+                lines.append(line)
+                line = ch
+            else:
+                line = test
+        if line:
+            lines.append(line)
+
+        line_h = font.getbbox("あ")[3] + 12
+        for ln in lines:
+            draw.text((W // 2, y), ln, font=font, fill=color, anchor="mt")
+            y += line_h
+        return y
+
+    # ── ロゴ ──
+    logo_font = get_font(72)
+    draw.text((W // 2, 160), "bemolle", font=logo_font, fill=accent, anchor="mm")
+    draw_divider(215)
+
+    # ── 日付 ──
     weekday = ["月", "火", "水", "木", "金", "土", "日"][today.weekday()]
+    date_font = get_font(36)
     draw.text(
-        (W // 2, 310),
+        (W // 2, 255),
         f"{today.month}月{today.day}日（{weekday}）",
         font=date_font, fill=text_mid, anchor="mm",
     )
 
-    # テーマ
-    theme_font = get_font(46)
-    draw.text((W // 2, 430), content["theme"], font=theme_font, fill=text_mid, anchor="mm")
+    # ── 挨拶 ──
+    greet_font = get_font(46)
+    y = 360
+    y = draw_text_wrapped(content["greeting"], greet_font, text_dark, y, W - pad * 2)
 
-    # 装飾ライン2
-    draw.line([(W//2 - lw, 490), (W//2 + lw, 490)], fill=accent, width=1)
+    # ── 状況 ──
+    y += 24
+    y = draw_text_wrapped(content["status"], greet_font, text_dark, y, W - pad * 2)
 
-    # メインテキスト（改行対応）
-    main_font = get_font(62)
-    lines = content["main_text"].split("\\n")
-    y_base = 750 - (len(lines) * 90) // 2
-    for i, line in enumerate(lines):
-        draw.text((W // 2, y_base + i * 92), line, font=main_font, fill=text_dark, anchor="mm")
+    # ── 締め一言 ──
+    y += 24
+    close_font = get_font(42)
+    y = draw_text_wrapped(content["closing"], close_font, text_mid, y, W - pad * 2)
 
-    # サブテキスト
-    sub_font = get_font(46)
-    draw.text((W // 2, 1000), content["sub_text"], font=sub_font, fill=text_mid, anchor="mm")
+    # ── コース欄 ──
+    y += 60
+    draw_divider(y)
+    y += 40
 
-    # 区切りドット
-    for dx in [-60, 0, 60]:
-        draw.ellipse(
-            [(W//2 + dx - 6, 1100 - 6), (W//2 + dx + 6, 1100 + 6)],
-            fill=accent,
-        )
+    course_font = get_font(42)
+    for course in content["courses"]:
+        draw.text((W // 2, y), course, font=course_font, fill=text_dark, anchor="mt")
+        y += course_font.getbbox("あ")[3] + 20
 
-    # CTA
-    cta_font = get_font(40)
-    draw.text((W // 2, 1720), "▼  " + content["cta"], font=cta_font, fill=accent, anchor="mm")
+    y += 30
+    draw_divider(y)
 
-    # 下部ライン
-    draw.line([(W//2 - lw, 1775), (W//2 + lw, 1775)], fill=accent, width=2)
-
-    # ブランドタグ
+    # ── ブランドタグ（下部） ──
     tag_font = get_font(34)
-    draw.text((W // 2, 1840), "@bemolle_diet", font=tag_font, fill=text_mid, anchor="mm")
+    draw.text((W // 2, H - 80), "@bemolle_diet", font=tag_font, fill=text_mid, anchor="mm")
 
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=92)
     return buf.getvalue()
 
 
-# ── 4. imgbb にアップロード（公開URL取得） ────────────────────
+# ── 4. imgbb にアップロード ────────────────────────────────────
 def upload_to_imgbb(image_bytes: bytes) -> str:
     b64 = base64.b64encode(image_bytes).decode()
     r = requests.post("https://api.imgbb.com/1/upload", data={
         "key": IMGBB_KEY,
         "image": b64,
-        "expiration": 7200,  # 2時間後削除（Meta APIが取得した後は不要）
+        "expiration": 7200,
     }, timeout=30)
     r.raise_for_status()
     return r.json()["data"]["url"]
@@ -180,7 +238,6 @@ def upload_to_imgbb(image_bytes: bytes) -> str:
 
 # ── 5. Instagram Stories に投稿 ───────────────────────────────
 def post_to_stories(ig_user_id: str, image_url: str) -> str:
-    # メディアコンテナ作成
     r = requests.post(f"{META_API}/{ig_user_id}/media", data={
         "image_url": image_url,
         "media_type": "STORIES",
@@ -189,7 +246,6 @@ def post_to_stories(ig_user_id: str, image_url: str) -> str:
     r.raise_for_status()
     creation_id = r.json()["id"]
 
-    # 公開
     r = requests.post(f"{META_API}/{ig_user_id}/media_publish", data={
         "creation_id": creation_id,
         "access_token": META_TOKEN,
@@ -225,8 +281,8 @@ def main() -> None:
 
     try:
         content = generate_content(today)
-        print(f"テーマ: {content['theme']}")
-        print(f"メイン: {content['main_text']}")
+        print(f"挨拶: {content['greeting']}")
+        print(f"コース: {content['courses']}")
     except Exception as e:
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nコンテンツ生成エラー: {e}")
         sys.exit(1)
@@ -248,8 +304,8 @@ def main() -> None:
 
     notify(
         f"✅ @bemolle_diet ストーリー投稿完了\n"
-        f"テーマ：{content['theme']}\n"
-        f"{today.strftime('%m/%d %H:%M')} JST"
+        f"{today.strftime('%m/%d')} {content['greeting'][:15]}…\n"
+        f"コース：{' / '.join(content['courses'])}"
     )
     print("完了")
 
