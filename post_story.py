@@ -24,9 +24,9 @@ GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GDRIVE_FOLDER        = "18K4hZUjbBH3V1XJjiSNNfss6GZnaTNqV"  # ベモーレ ストーリー素材（ルート）
-GDRIVE_FOLDER_SLIM   = "170R8MxD_ByugDmxctVQbpmY2p3nXVDK8"  # 痩身専用
-GDRIVE_FOLDER_FACIAL = "1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj"  # 肌質改善専用
-GDRIVE_FOLDER_BOTH   = "18eBpPM72QvZrlVwCAmeenfq6pNjoIEQy"   # 共通（両方の日用）
+GDRIVE_FOLDER_SLIM   = "170R8MxD_ByugDmxctVQbpmY2p3nXVDK8"  # 痩身
+GDRIVE_FOLDER_FACIAL = "1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj"  # 肌質改善
+GDRIVE_FOLDER_COMMON = "18eBpPM72QvZrlVwCAmeenfq6pNjoIEQy"   # 共通（部屋・内装など汎用）
 IG_USER_ID     = os.environ.get("IG_USER_ID", "17841470478859455")
 META_API       = "https://graph.facebook.com/v25.0"
 JST            = timezone(timedelta(hours=9))
@@ -68,20 +68,17 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
         r.raise_for_status()
         token = r.json()["access_token"]
 
-        # 今日のコースに対応するフォルダを決める
+        # 今日のコースに対応するフォルダを決める（共通は常にフォールバック）
         has_slim   = any("痩身" in c for c in course_pool)
         has_facial = any("肌質" in c for c in course_pool)
         if has_slim and has_facial:
-            # 両方 → 共通フォルダ優先、次に痩身・肌質改善、最後にルート
-            folder_ids = [GDRIVE_FOLDER_BOTH, GDRIVE_FOLDER_SLIM, GDRIVE_FOLDER_FACIAL, GDRIVE_FOLDER]
+            folder_ids = [GDRIVE_FOLDER_SLIM, GDRIVE_FOLDER_FACIAL, GDRIVE_FOLDER_COMMON, GDRIVE_FOLDER]
         elif has_slim:
-            # 痩身のみ → 痩身フォルダ優先、次に共通、最後にルート
-            folder_ids = [GDRIVE_FOLDER_SLIM, GDRIVE_FOLDER_BOTH, GDRIVE_FOLDER]
+            folder_ids = [GDRIVE_FOLDER_SLIM, GDRIVE_FOLDER_COMMON, GDRIVE_FOLDER]
         elif has_facial:
-            # 肌質改善のみ → 肌質改善フォルダ優先、次に共通、最後にルート
-            folder_ids = [GDRIVE_FOLDER_FACIAL, GDRIVE_FOLDER_BOTH, GDRIVE_FOLDER]
+            folder_ids = [GDRIVE_FOLDER_FACIAL, GDRIVE_FOLDER_COMMON, GDRIVE_FOLDER]
         else:
-            folder_ids = [GDRIVE_FOLDER]
+            folder_ids = [GDRIVE_FOLDER_COMMON, GDRIVE_FOLDER]
 
         # 優先フォルダから順に写真を探す
         for folder_id in folder_ids:
