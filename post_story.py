@@ -15,6 +15,35 @@ import anthropic
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
+
+def extract_json(text: str) -> dict:
+    """括弧の深さを追跡して最初のJSONオブジェクトを正確に抽出する"""
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("JSONが見つかりません")
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    raise ValueError("JSONの終端が見つかりません")
+
 # ── 設定 ──────────────────────────────────────────────────────────
 META_TOKEN    = os.environ["META_ACCESS_TOKEN"]
 ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
@@ -281,9 +310,7 @@ def generate_sunday_content(today: datetime) -> dict:
         temperature=1,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = message.content[0].text
-    start, end = raw.find("{"), raw.rfind("}") + 1
-    result = json.loads(raw[start:end])
+    result = extract_json(message.content[0].text)
     result["courses"] = []  # 定休日はコースなし
     return result
 
@@ -357,9 +384,7 @@ def generate_content(today: datetime) -> dict:
         temperature=1,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = message.content[0].text
-    start, end = raw.find("{"), raw.rfind("}") + 1
-    result = json.loads(raw[start:end])
+    result = extract_json(message.content[0].text)
     result["courses"] = course_pool
     return result
 
