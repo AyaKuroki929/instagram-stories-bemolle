@@ -404,11 +404,13 @@ def build_image(content: dict, today: datetime) -> bytes:
         """
         1. 。・、の後は必ず改行
         2. 行が40%を超えたら助詞（で・に・を・が・は・と）の後を潜在的な改行点として記録
-        3. max_w 超過時に記録済み助詞位置で折り返し（なければ直前で折り返し）
+        3. max_w 超過時に、残り4文字以上になる助詞位置で折り返し
+           残りが3文字以下になる場合は折り返しを見送り、次の区切りまで待つ（「ね。」「す。」防止）
         """
         HARD = frozenset("。、")
         SOFT = frozenset("でにをがはと")
         half_w = max_w * 0.40
+        MIN_REMAIN = 4
 
         lines, line, soft_line = [], "", None
 
@@ -427,12 +429,16 @@ def build_image(content: dict, today: datetime) -> bytes:
 
             if w > max_w and len(line) > 1:
                 if soft_line and len(soft_line) < len(line):
-                    lines.append(soft_line)
-                    line = line[len(soft_line):]
+                    remaining = line[len(soft_line):]
+                    if len(remaining) >= MIN_REMAIN:
+                        lines.append(soft_line)
+                        line = remaining
+                        soft_line = None
+                    # else: 残りが3文字以下 → 少しはみ出しを許容して次のHARDまで待つ
                 else:
                     lines.append(line[:-1])
                     line = ch
-                soft_line = None
+                    soft_line = None
 
         if line:
             lines.append(line)
