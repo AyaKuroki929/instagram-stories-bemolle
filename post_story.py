@@ -112,7 +112,68 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
         return None
 
 
-# ── 3. コンテンツ生成（Claude Haiku） ───────────────────────────
+# ── 3a. 日曜定休日コンテンツ生成 ────────────────────────────────
+def generate_sunday_content(today: datetime) -> dict:
+    month = today.month
+
+    if month in (12, 1, 2):   season = "冬"
+    elif month in (3, 4, 5):  season = "春"
+    elif month in (6, 7, 8):  season = "夏"
+    else:                      season = "秋"
+
+    # 内容タイプをランダム選択
+    result_type = random.choices(
+        ["general", "skin", "body", "both"],
+        weights=[40, 25, 25, 10],
+    )[0]
+
+    result_hint = {
+        "general":  "先週たくさんのご予約・ご来院への純粋な感謝",
+        "skin":     "先週お肌の変化・改善を実感してくださった方がいたことへの感謝（具体的な感情を含める）",
+        "body":     "先週体の変化・ダイエット効果を実感してくださった方がいたことへの感謝（具体的な感情を含める）",
+        "both":     "先週お肌と体の両方で嬉しい変化の報告があったことへの感謝",
+    }[result_type]
+
+    prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
+今日は日曜日・定休日です。以下のルールで投稿文をJSONで出力してください。
+
+今日：{month}月（{season}）・日曜日・定休日
+
+【構成】
+① 朝の挨拶（短く。「ベモーレです」は不要）
+② 定休日のお知らせ＋{result_hint}
+③ 明日月曜日から営業再開することを伝える締め（前向きで温かく）
+
+【文章ルール】
+・「ベモーレ」はカタカナのみ
+・{season}らしい言葉や空気感を自然に一言だけ入れてもいい
+・AIっぽい整いすぎた文章は禁止。黒木（オーナー）がそのまま投稿できる温度感
+・敬語ベースで柔らかく。短文と中文を混ぜてリズムをつける
+・誇張・大げさな表現は禁止
+・毎週違う表現になるよう、定型フレーズを避ける
+
+以下のJSONのみ出力（他は不要）：
+{{
+  "greeting": "朝の挨拶（1文）",
+  "status": "定休日のお知らせ＋感謝（2〜3文）",
+  "closing": "明日からの営業再開（1〜2文）"
+}}"""
+
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
+        temperature=1,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = message.content[0].text
+    start, end = raw.find("{"), raw.rfind("}") + 1
+    result = json.loads(raw[start:end])
+    result["courses"] = []  # 定休日はコースなし
+    return result
+
+
+# ── 3b. 平日コンテンツ生成（Claude Haiku） ───────────────────────
 def generate_content(today: datetime) -> dict:
     month   = today.month
     day     = today.day
@@ -261,26 +322,23 @@ def build_image(content: dict, today: datetime) -> bytes:
     y += 40
     y = draw_block(content["closing"],  close_font, text_sub,  y, W - pad * 2)
 
-    # ── コース一覧（右下） ──
-    course_font = get_font(40)
-    lh_c = course_font.getbbox("あ")[3] + 20
-    n = len(content["courses"])
-
-    right_pad = 80
-    max_cw = max(course_font.getbbox(f"・{c}")[2] for c in content["courses"])
-    x_left  = W - right_pad - max_cw
-    x_right = W - right_pad
-
-    bottom_margin = 110
-    block_h = lh_c * n
-    y_top = H - bottom_margin - block_h - 50  # 上divider位置
-
-    draw.line([(x_left, y_top), (x_right, y_top)], fill=line_color, width=1)
-    y_c = y_top + 20
-    for course in content["courses"]:
-        draw.text((x_left, y_c), f"・{course}", font=course_font, fill=text_main, anchor="lt")
-        y_c += lh_c
-    draw.line([(x_left, y_c + 8), (x_right, y_c + 8)], fill=line_color, width=1)
+    # ── コース一覧（右下）※日曜定休日は非表示 ──
+    if content.get("courses"):
+        course_font = get_font(40)
+        lh_c = course_font.getbbox("あ")[3] + 20
+        right_pad = 80
+        max_cw = max(course_font.getbbox(f"・{c}")[2] for c in content["courses"])
+        x_left  = W - right_pad - max_cw
+        x_right = W - right_pad
+        bottom_margin = 110
+        block_h = lh_c * len(content["courses"])
+        y_top = H - bottom_margin - block_h - 50
+        draw.line([(x_left, y_top), (x_right, y_top)], fill=line_color, width=1)
+        y_c = y_top + 20
+        for course in content["courses"]:
+            draw.text((x_left, y_c), f"・{course}", font=course_font, fill=text_main, anchor="lt")
+            y_c += lh_c
+        draw.line([(x_left, y_c + 8), (x_right, y_c + 8)], fill=line_color, width=1)
 
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=92)
@@ -343,9 +401,11 @@ def main() -> None:
         sys.exit(1)
 
     try:
-        content = generate_content(today)
+        is_sunday = today.weekday() == 6
+        content = generate_sunday_content(today) if is_sunday else generate_content(today)
         print(f"挨拶: {content['greeting']}")
-        print(f"コース: {content['courses']}")
+        if not is_sunday:
+            print(f"コース: {content['courses']}")
     except Exception as e:
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nコンテンツ生成エラー: {e}")
         sys.exit(1)
