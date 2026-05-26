@@ -23,8 +23,10 @@ LINE_TOKEN     = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-USED_PHOTOS_FILE = "used_photos.json"
-COOLDOWN_DAYS    = 14
+USED_PHOTOS_FILE     = "used_photos.json"
+COOLDOWN_DAYS        = 14  # 同じ写真を使わない日数
+SIMILARITY_DAYS      = 3   # 類似写真を避ける日数
+SIMILARITY_THRESHOLD = 8   # ahashのハミング距離（64ビット中・これ以下を「似ている」と判定）
 GDRIVE_FOLDER        = "18K4hZUjbBH3V1XJjiSNNfss6GZnaTNqV"  # ベモーレ ストーリー素材（ルート）
 GDRIVE_FOLDER_SLIM   = "170R8MxD_ByugDmxctVQbpmY2p3nXVDK8"  # 痩身
 GDRIVE_FOLDER_FACIAL = "1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj"  # 肌質改善
@@ -44,24 +46,66 @@ COURSES_FACIAL = ["３ヶ月肌質改善プログラム", "６ヶ月肌質改善
 COURSES_TRIAL  = ["全身痩身体験", "肌質改善体験"]
 
 
-def load_used_photos() -> dict[str, str]:
-    """使用済み写真IDと使用日時を読み込む（7日以上前は自動除外）"""
+def photo_ahash(img_bytes: bytes) -> str:
+    """平均ハッシュ（ahash）で画像の見た目フィンガープリントを返す。PIL のみで計算。"""
+    try:
+        img = Image.open(BytesIO(img_bytes)).convert("L").resize((8, 8), Image.LANCZOS)
+        pixels = list(img.getdata())
+        avg = sum(pixels) / len(pixels)
+        bits = "".join("1" if p >= avg else "0" for p in pixels)
+        return format(int(bits, 2), "016x")
+    except Exception:
+        return ""
+
+
+def hash_distance(h1: str, h2: str) -> int:
+    if not h1 or not h2:
+        return 64
+    return bin(int(h1, 16) ^ int(h2, 16)).count("1")
+
+
+def load_used_photos() -> dict[str, dict]:
+    """使用済み写真を読み込む（14日以上前は除外）"""
     if not os.path.exists(USED_PHOTOS_FILE):
         return {}
     try:
         with open(USED_PHOTOS_FILE, encoding="utf-8") as f:
             data = json.load(f)
         cutoff = datetime.now(JST) - timedelta(days=COOLDOWN_DAYS)
-        return {fid: ts for fid, ts in data.items()
-                if datetime.fromisoformat(ts) > cutoff}
+        result = {}
+        for fid, info in data.items():
+            if isinstance(info, str):  # 旧フォーマット互換
+                info = {"ts": info, "hash": ""}
+            if datetime.fromisoformat(info.get("ts", "1970-01-01T00:00:00+00:00")) > cutoff:
+                result[fid] = info
+        return result
     except Exception:
         return {}
 
 
-def save_used_photo(file_id: str) -> None:
-    """使用した写真IDを used_photos.json に記録する"""
+def get_recent_hashes(days: int) -> list[str]:
+    """直近N日以内に使った写真のハッシュ一覧を返す（類似チェック用）"""
+    if not os.path.exists(USED_PHOTOS_FILE):
+        return []
+    try:
+        with open(USED_PHOTOS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        cutoff = datetime.now(JST) - timedelta(days=days)
+        return [
+            info["hash"]
+            for info in data.values()
+            if isinstance(info, dict)
+            and datetime.fromisoformat(info.get("ts", "1970-01-01T00:00:00+00:00")) > cutoff
+            and info.get("hash")
+        ]
+    except Exception:
+        return []
+
+
+def save_used_photo(file_id: str, photo_hash: str = "") -> None:
+    """使用した写真IDとハッシュを used_photos.json に記録する"""
     used = load_used_photos()
-    used[file_id] = datetime.now(JST).isoformat()
+    used[file_id] = {"ts": datetime.now(JST).isoformat(), "hash": photo_hash}
     try:
         with open(USED_PHOTOS_FILE, "w", encoding="utf-8") as f:
             json.dump(used, f, ensure_ascii=False, indent=2)
@@ -110,13 +154,15 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
         # 優先フォルダから順に写真を探す
         auth_headers = {"Authorization": f"Bearer {token}"}
         used = load_used_photos()
+        recent_h = get_recent_hashes(SIMILARITY_DAYS)
+
         for folder_id in folder_ids:
             r2 = requests.get(
                 "https://www.googleapis.com/drive/v3/files",
                 headers=auth_headers,
                 params={
                     "q": f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false",
-                    "fields": "files(id,name)",
+                    "fields": "files(id,name,thumbnailLink)",
                 },
                 timeout=15,
             )
@@ -124,21 +170,56 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             files = r2.json().get("files", [])
             if not files:
                 continue
-            # 直近7日以内に使った写真を除外。全て使用済みならフォルダ全体から選ぶ
+
+            # 14日クールダウン除外。全使用済みならフォルダ全体から選ぶ
             fresh = [f for f in files if f["id"] not in used]
             candidates = fresh if fresh else files
-            chosen = random.choice(candidates)
-            r3 = requests.get(
-                f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
-                headers=auth_headers,
-                params={"alt": "media"},
-                timeout=30,
-            )
-            r3.raise_for_status()
-            save_used_photo(chosen["id"])
-            label = "" if fresh else "（全使用済みのためリセット）"
-            print(f"Drive写真: {chosen['name']}{label}")
-            return r3.content
+            random.shuffle(candidates)
+
+            fallback = None
+            for candidate in candidates:
+                # サムネイルをダウンロードして類似チェック
+                if recent_h:
+                    thumb_url = candidate.get("thumbnailLink")
+                    if thumb_url:
+                        try:
+                            tr = requests.get(thumb_url, timeout=10)
+                            if tr.status_code == 200:
+                                h = photo_ahash(tr.content)
+                                if any(hash_distance(h, rh) <= SIMILARITY_THRESHOLD for rh in recent_h):
+                                    if fallback is None:
+                                        fallback = candidate
+                                    continue  # 似ているのでスキップ
+                        except Exception:
+                            pass  # サムネ取得失敗は無視して続行
+
+                # 類似でない（またはチェック不可）→ フル画像をダウンロード
+                r3 = requests.get(
+                    f"https://www.googleapis.com/drive/v3/files/{candidate['id']}",
+                    headers=auth_headers,
+                    params={"alt": "media"},
+                    timeout=30,
+                )
+                r3.raise_for_status()
+                h_full = photo_ahash(r3.content)
+                save_used_photo(candidate["id"], h_full)
+                label = "" if fresh else "（全使用済みのためリセット）"
+                print(f"Drive写真: {candidate['name']}{label}")
+                return r3.content
+
+            # 全候補が似ていた場合 → フォールバック（最初の候補を使用）
+            if fallback:
+                r3 = requests.get(
+                    f"https://www.googleapis.com/drive/v3/files/{fallback['id']}",
+                    headers=auth_headers,
+                    params={"alt": "media"},
+                    timeout=30,
+                )
+                r3.raise_for_status()
+                h_full = photo_ahash(r3.content)
+                save_used_photo(fallback["id"], h_full)
+                print(f"Drive写真: {fallback['name']}（類似のみのためフォールバック）")
+                return r3.content
 
         return None
     except Exception as e:
