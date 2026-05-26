@@ -18,8 +18,8 @@ META_TOKEN  = os.environ["META_ACCESS_TOKEN"]
 GEMINI_KEY  = os.environ["GEMINI_API_KEY"]
 IMGBB_KEY   = os.environ["IMGBB_API_KEY"]
 LINE_TOKEN  = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-IG_USERNAME = "bemolle_diet"
-META_API    = "https://graph.facebook.com/v21.0"
+IG_USER_ID  = os.environ.get("IG_USER_ID", "17841470478859455")  # @bemolle_diet
+META_API    = "https://graph.facebook.com/v25.0"
 JST         = timezone(timedelta(hours=9))
 
 FONT_PATHS = [
@@ -40,18 +40,9 @@ def get_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-# ── 1. Instagram Business Account ID を取得 ────────────────────
+# ── 1. Instagram Business Account ID を返す ────────────────────
 def get_ig_user_id() -> str:
-    r = requests.get(f"{META_API}/me/accounts", params={
-        "fields": "id,name,instagram_business_account{id,username}",
-        "access_token": META_TOKEN,
-    }, timeout=30)
-    r.raise_for_status()
-    for page in r.json().get("data", []):
-        ig = page.get("instagram_business_account", {})
-        if ig.get("username") == IG_USERNAME:
-            return ig["id"]
-    raise RuntimeError(f"@{IG_USERNAME} がFacebookページに連携されていません")
+    return IG_USER_ID
 
 
 # ── 2. Gemini Flash でストーリー1枚目を生成 ───────────────────
