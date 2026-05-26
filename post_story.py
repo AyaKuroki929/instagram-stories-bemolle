@@ -354,11 +354,7 @@ def generate_content(today: datetime) -> dict:
 
 【1枚目の構成ルール】
 ① 朝の挨拶（1〜2文。「ベモーレです」は不要。自然な挨拶のみ）
-② 本日の状況（以下をそのまま使う・変更禁止）：「{status}」
-③ ご来店を心待ちにしていることが伝わる一言（季節・天気・気遣いなど、毎回変える）
-
-今日のコース（以下をそのまま使う）：
-{courses_str}
+② ご来店を心待ちにしていることが伝わる一言（季節・天気・気遣いなど、毎回変える）
 
 【文章ルール（最重要）】
 ・「ベモーレ」はカタカナ表記のみ（Bemolleは使わない）
@@ -373,7 +369,6 @@ def generate_content(today: datetime) -> dict:
 以下のJSONのみ出力（他は不要）：
 {{
   "greeting": "朝の挨拶（1〜2文）",
-  "status": "{status}",
   "closing": "心待ちにしている一言（季節・気遣い含む、1文）"
 }}"""
 
@@ -385,6 +380,7 @@ def generate_content(today: datetime) -> dict:
         messages=[{"role": "user", "content": prompt}],
     )
     result = extract_json(message.content[0].text)
+    result["status"] = status   # Pythonで決定した文言をそのまま使う（Claude変更禁止）
     result["courses"] = course_pool
     return result
 
