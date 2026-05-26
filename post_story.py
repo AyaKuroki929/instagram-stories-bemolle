@@ -81,13 +81,14 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             folder_ids = [GDRIVE_FOLDER_COMMON, GDRIVE_FOLDER]
 
         # 優先フォルダから順に写真を探す
+        auth_headers = {"Authorization": f"Bearer {token}"}
         for folder_id in folder_ids:
             r2 = requests.get(
                 "https://www.googleapis.com/drive/v3/files",
+                headers=auth_headers,
                 params={
                     "q": f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false",
                     "fields": "files(id,name)",
-                    "access_token": token,
                 },
                 timeout=15,
             )
@@ -97,7 +98,8 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
                 chosen = random.choice(files)
                 r3 = requests.get(
                     f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
-                    params={"alt": "media", "access_token": token},
+                    headers=auth_headers,
+                    params={"alt": "media"},
                     timeout=30,
                 )
                 r3.raise_for_status()
