@@ -216,7 +216,7 @@ def build_image(content: dict, today: datetime) -> bytes:
     draw = ImageDraw.Draw(img)
 
     def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
-        """。の後は必ず改行。それ以外は max_w で折り返し。"""
+        """。と、の後は必ず改行。それ以外は max_w で折り返し。"""
         lines, line = [], ""
         for ch in text:
             test = line + ch
@@ -225,7 +225,7 @@ def build_image(content: dict, today: datetime) -> bytes:
                 line = ch
             else:
                 line = test
-            if ch == "。" and line:
+            if ch in ("。", "、") and line:
                 lines.append(line)
                 line = ""
         if line:
