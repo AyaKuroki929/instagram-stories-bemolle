@@ -11,12 +11,13 @@ import time
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 
+import anthropic
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
 # ── 設定 ──────────────────────────────────────────────────────────
 META_TOKEN    = os.environ["META_ACCESS_TOKEN"]
-GEMINI_KEY    = os.environ["GEMINI_API_KEY"]
+ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
 IMGBB_KEY      = os.environ["IMGBB_API_KEY"]
 LINE_TOKEN     = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
@@ -163,22 +164,14 @@ def generate_content(today: datetime) -> dict:
   "closing": "心待ちにしている一言（季節・気遣い含む、1文）"
 }}"""
 
-    for attempt in range(3):
-        r = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-            params={"key": GEMINI_KEY},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"temperature": 0.9},
-            },
-            timeout=30,
-        )
-        if r.status_code == 429 and attempt < 2:
-            time.sleep(30)
-            continue
-        r.raise_for_status()
-        break
-    raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
+        temperature=1,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = message.content[0].text
     start, end = raw.find("{"), raw.rfind("}") + 1
     result = json.loads(raw[start:end])
     result["courses"] = course_pool
