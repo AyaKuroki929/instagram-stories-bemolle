@@ -289,6 +289,7 @@ def main() -> None:
         media_id = post_to_stories(ig_id, image_url)
         print(f"投稿完了: media_id={media_id}")
     except Exception as e:
+        print(f"Meta APIエラー: {e}", file=sys.stderr)
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nMeta APIエラー: {e}")
         sys.exit(1)
 
