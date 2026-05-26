@@ -401,18 +401,39 @@ def build_image(content: dict, today: datetime) -> bytes:
     draw = ImageDraw.Draw(img)
 
     def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
-        """。と、の後は必ず改行。それ以外は max_w で折り返し。"""
-        lines, line = [], ""
+        """
+        1. 。・、の後は必ず改行
+        2. 行が40%を超えたら助詞（で・に・を・が・は・と）の後を潜在的な改行点として記録
+        3. max_w 超過時に記録済み助詞位置で折り返し（なければ直前で折り返し）
+        """
+        HARD = frozenset("。、")
+        SOFT = frozenset("でにをがはと")
+        half_w = max_w * 0.40
+
+        lines, line, soft_line = [], "", None
+
         for ch in text:
-            test = line + ch
-            if font.getbbox(test)[2] > max_w and line:
-                lines.append(line)
-                line = ch
-            else:
-                line = test
-            if ch in ("。", "、") and line:
+            line += ch
+            w = font.getbbox(line)[2]
+
+            if ch in HARD:
                 lines.append(line)
                 line = ""
+                soft_line = None
+                continue
+
+            if ch in SOFT and w >= half_w:
+                soft_line = line
+
+            if w > max_w and len(line) > 1:
+                if soft_line and len(soft_line) < len(line):
+                    lines.append(soft_line)
+                    line = line[len(soft_line):]
+                else:
+                    lines.append(line[:-1])
+                    line = ch
+                soft_line = None
+
         if line:
             lines.append(line)
         return lines
@@ -541,11 +562,6 @@ def main() -> None:
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nMeta APIエラー: {e}")
         sys.exit(1)
 
-    notify(
-        f"✅ @bemolle_diet ストーリー投稿完了\n"
-        f"{today.strftime('%m/%d')} {content['greeting'][:15]}…\n"
-        f"コース：{' / '.join(content['courses'])}"
-    )
     print("完了")
 
 

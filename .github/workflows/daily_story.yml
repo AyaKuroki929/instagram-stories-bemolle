@@ -2,8 +2,10 @@ name: Daily Instagram Story - @bemolle_diet
 
 on:
   schedule:
-    - cron: "0 22 * * *"  # 毎日7:00 JST = 22:00 UTC
-  workflow_dispatch:       # 手動実行用
+    - cron: "0 22 * * *"  # バックアップ発火（GH Actionsは遅延あり）
+  workflow_dispatch:
+  repository_dispatch:
+    types: [daily_story]  # cron-job.orgからの発火（主系）
 
 jobs:
   post-story:
