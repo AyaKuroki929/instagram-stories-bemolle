@@ -1,0 +1,33 @@
+name: Daily Instagram Story - @bemolle_diet
+
+on:
+  schedule:
+    - cron: "0 22 * * *"  # 毎日7:00 JST = 22:00 UTC
+  workflow_dispatch:       # 手動実行用
+
+jobs:
+  post-story:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Japanese fonts
+        run: sudo apt-get install -y fonts-noto-cjk
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post story
+        env:
+          META_ACCESS_TOKEN:        ${{ secrets.META_ACCESS_TOKEN_STORIES }}
+          GEMINI_API_KEY:           ${{ secrets.GEMINI_API_KEY }}
+          IMGBB_API_KEY:            ${{ secrets.IMGBB_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: python post_story.py
