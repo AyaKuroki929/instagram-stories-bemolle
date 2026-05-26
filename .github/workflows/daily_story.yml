@@ -30,4 +30,7 @@ jobs:
           ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
           IMGBB_API_KEY:            ${{ secrets.IMGBB_API_KEY }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          GOOGLE_REFRESH_TOKEN:     ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_CLIENT_ID:         ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET:     ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: python post_story.py

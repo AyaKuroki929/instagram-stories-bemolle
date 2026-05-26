@@ -16,13 +16,19 @@ import requests
 from PIL import Image, ImageDraw, ImageFont
 
 # ── 設定 ──────────────────────────────────────────────────────────
-META_TOKEN      = os.environ["META_ACCESS_TOKEN"]
-ANTHROPIC_KEY   = os.environ["ANTHROPIC_API_KEY"]
-IMGBB_KEY       = os.environ["IMGBB_API_KEY"]
-LINE_TOKEN      = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-IG_USER_ID  = os.environ.get("IG_USER_ID", "17841470478859455")  # @bemolle_diet
-META_API    = "https://graph.facebook.com/v25.0"
-JST         = timezone(timedelta(hours=9))
+META_TOKEN     = os.environ["META_ACCESS_TOKEN"]
+ANTHROPIC_KEY  = os.environ["ANTHROPIC_API_KEY"]
+IMGBB_KEY      = os.environ["IMGBB_API_KEY"]
+LINE_TOKEN     = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
+GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
+GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GDRIVE_FOLDER        = "18K4hZUjbBH3V1XJjiSNNfss6GZnaTNqV"  # ベモーレ ストーリー素材
+GDRIVE_FOLDER_SLIM   = "170R8MxD_ByugDmxctVQbpmY2p3nXVDK8"  # 痩身
+GDRIVE_FOLDER_FACIAL = "1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj"  # 肌質改善
+IG_USER_ID     = os.environ.get("IG_USER_ID", "17841470478859455")
+META_API       = "https://graph.facebook.com/v25.0"
+JST            = timezone(timedelta(hours=9))
 
 FONT_PATHS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -30,7 +36,7 @@ FONT_PATHS = [
     "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
 ]
 
-COURSES_SLIM  = ["全身痩身12回コース", "全身痩身18回コース", "全身痩身24回コース"]
+COURSES_SLIM   = ["全身痩身12回コース", "全身痩身18回コース", "全身痩身24回コース"]
 COURSES_FACIAL = ["３ヶ月肌質改善プログラム", "６ヶ月肌質改善プログラム"]
 COURSES_TRIAL  = ["全身痩身体験", "肌質改善体験"]
 
@@ -42,30 +48,83 @@ def get_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-# ── 1. Instagram Business Account ID を返す ────────────────────
+# ── 1. IG User ID ────────────────────────────────────────────────
 def get_ig_user_id() -> str:
     return IG_USER_ID
 
 
-# ── 2. Gemini Flash でストーリー1枚目を生成 ───────────────────
+# ── 2. Google Drive から背景写真を取得（コース内容に連動） ─────
+def get_drive_photo(course_pool: list[str]) -> bytes | None:
+    if not GDRIVE_REFRESH:
+        return None
+    try:
+        r = requests.post("https://oauth2.googleapis.com/token", data={
+            "grant_type": "refresh_token",
+            "refresh_token": GDRIVE_REFRESH,
+            "client_id": GDRIVE_CLIENT,
+            "client_secret": GDRIVE_SECRET,
+        }, timeout=15)
+        r.raise_for_status()
+        token = r.json()["access_token"]
+
+        # 今日のコースに対応するフォルダを決める
+        has_slim   = any("痩身" in c for c in course_pool)
+        has_facial = any("肌質" in c for c in course_pool)
+        if has_slim and has_facial:
+            folder_ids = [GDRIVE_FOLDER_SLIM, GDRIVE_FOLDER_FACIAL, GDRIVE_FOLDER]
+        elif has_slim:
+            folder_ids = [GDRIVE_FOLDER_SLIM, GDRIVE_FOLDER]
+        elif has_facial:
+            folder_ids = [GDRIVE_FOLDER_FACIAL, GDRIVE_FOLDER]
+        else:
+            folder_ids = [GDRIVE_FOLDER]
+
+        # 優先フォルダから順に写真を探す
+        for folder_id in folder_ids:
+            r2 = requests.get(
+                "https://www.googleapis.com/drive/v3/files",
+                params={
+                    "q": f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false",
+                    "fields": "files(id,name)",
+                    "access_token": token,
+                },
+                timeout=15,
+            )
+            r2.raise_for_status()
+            files = r2.json().get("files", [])
+            if files:
+                chosen = random.choice(files)
+                r3 = requests.get(
+                    f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
+                    params={"alt": "media", "access_token": token},
+                    timeout=30,
+                )
+                r3.raise_for_status()
+                print(f"Drive写真: {chosen['name']}")
+                return r3.content
+
+        return None
+    except Exception as e:
+        print(f"Drive取得失敗（グラデーション背景で代替）: {e}", file=sys.stderr)
+        return None
+
+
+# ── 3. コンテンツ生成（Claude Haiku） ───────────────────────────
 def generate_content(today: datetime) -> dict:
-    month  = today.month
-    day    = today.day
+    month   = today.month
+    day     = today.day
     weekday = ["月", "火", "水", "木", "金", "土", "日"][today.weekday()]
 
-    # 季節
     if month in (12, 1, 2):   season = "冬"
     elif month in (3, 4, 5):  season = "春"
     elif month in (6, 7, 8):  season = "夏"
     else:                      season = "秋"
 
-    # コース候補をランダムに2〜3個（痩身と肌質改善が偏らないように）
     slim_pick   = random.sample(COURSES_SLIM, k=random.randint(1, 2))
     facial_pick = random.sample(COURSES_FACIAL, k=1)
-    # 8割で満席→新規含む日は体験コースも混ぜる
     include_new = random.random() < 0.4
     if include_new:
-        trial_pick = [random.choice(COURSES_TRIAL)]
+        trial_pick  = [random.choice(COURSES_TRIAL)]
         course_pool = trial_pick + slim_pick[:1] + facial_pick[:1]
     else:
         course_pool = slim_pick + facial_pick
@@ -119,102 +178,106 @@ def generate_content(today: datetime) -> dict:
     return result
 
 
-# ── 3. Pillow で画像生成（1080×1920） ─────────────────────────
+# ── 4. 画像生成（1080×1920） ───────────────────────────────────
 def build_image(content: dict, today: datetime) -> bytes:
     W, H = 1080, 1920
-    img = Image.new("RGB", (W, H))
+
+    # 背景：Drive写真 or グラデーション（フォールバック）
+    photo_bytes = get_drive_photo(content["courses"])
+    if photo_bytes:
+        bg = Image.open(BytesIO(photo_bytes)).convert("RGB")
+        bw, bh = bg.size
+        scale = max(W / bw, H / bh)
+        nw, nh = int(bw * scale), int(bh * scale)
+        bg = bg.resize((nw, nh), Image.LANCZOS)
+        left, top = (nw - W) // 2, (nh - H) // 2
+        bg = bg.crop((left, top, left + W, top + H))
+        # 半透明オーバーレイ（明るい写真・暗い写真どちらでも文字が読める）
+        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 110))
+        img = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
+        text_main  = (255, 255, 255)
+        text_sub   = (235, 220, 220)
+        line_color = (255, 255, 255)
+    else:
+        img = Image.new("RGB", (W, H))
+        tmp = ImageDraw.Draw(img)
+        for y in range(H):
+            t = y / H
+            tmp.line([(0, y), (W, y)], fill=(
+                int(251 * (1 - t) + 237 * t),
+                int(245 * (1 - t) + 218 * t),
+                int(240 * (1 - t) + 218 * t),
+            ))
+        text_main  = (58, 38, 38)
+        text_sub   = (110, 75, 75)
+        line_color = (200, 160, 160)
+
     draw = ImageDraw.Draw(img)
 
-    # グラデーション背景（温かいベージュ→ローズ）
-    for y in range(H):
-        t = y / H
-        r = int(251 * (1 - t) + 237 * t)
-        g = int(245 * (1 - t) + 218 * t)
-        b = int(240 * (1 - t) + 218 * t)
-        draw.line([(0, y), (W, y)], fill=(r, g, b))
-
-    accent    = (172, 108, 108)
-    text_dark = (58, 38, 38)
-    text_mid  = (110, 75, 75)
-    divider_color = (200, 160, 160)
-
-    pad = 80  # 左右余白
-
-    def draw_divider(y: int) -> None:
-        draw.line([(pad, y), (W - pad, y)], fill=divider_color, width=1)
-
-    def draw_text_wrapped(text: str, font: ImageFont.FreeTypeFont,
-                           color: tuple, y: int, max_width: int) -> int:
-        """テキストを折り返してy座標を返す（終端y）"""
+    def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
+        """。の後は必ず改行。それ以外は max_w で折り返し。"""
         lines, line = [], ""
         for ch in text:
             test = line + ch
-            bbox = font.getbbox(test)
-            if bbox[2] > max_width and line:
+            if font.getbbox(test)[2] > max_w and line:
                 lines.append(line)
                 line = ch
             else:
                 line = test
+            if ch == "。" and line:
+                lines.append(line)
+                line = ""
         if line:
             lines.append(line)
+        return lines
 
-        line_h = font.getbbox("あ")[3] + 12
-        for ln in lines:
+    def draw_block(text: str, font: ImageFont.FreeTypeFont, color: tuple,
+                   y: int, max_w: int) -> int:
+        lh = font.getbbox("あ")[3] + 16
+        for ln in wrapped_lines(text, font, max_w):
             draw.text((W // 2, y), ln, font=font, fill=color, anchor="mt")
-            y += line_h
+            y += lh
         return y
 
-    # ── ロゴ ──
-    logo_font = get_font(72)
-    draw.text((W // 2, 160), "bemolle", font=logo_font, fill=accent, anchor="mm")
-    draw_divider(215)
+    # ── メインテキスト（上部・中央） ──
+    greet_font = get_font(52)
+    close_font = get_font(44)
+    pad = 80
 
-    # ── 日付 ──
-    weekday = ["月", "火", "水", "木", "金", "土", "日"][today.weekday()]
-    date_font = get_font(36)
-    draw.text(
-        (W // 2, 255),
-        f"{today.month}月{today.day}日（{weekday}）",
-        font=date_font, fill=text_mid, anchor="mm",
-    )
-
-    # ── 挨拶 ──
-    greet_font = get_font(46)
-    y = 360
-    y = draw_text_wrapped(content["greeting"], greet_font, text_dark, y, W - pad * 2)
-
-    # ── 状況 ──
-    y += 24
-    y = draw_text_wrapped(content["status"], greet_font, text_dark, y, W - pad * 2)
-
-    # ── 締め一言 ──
-    y += 24
-    close_font = get_font(42)
-    y = draw_text_wrapped(content["closing"], close_font, text_mid, y, W - pad * 2)
-
-    # ── コース欄 ──
-    y += 60
-    draw_divider(y)
+    y = 300
+    y = draw_block(content["greeting"], greet_font, text_main, y, W - pad * 2)
     y += 40
+    y = draw_block(content["status"],   greet_font, text_main, y, W - pad * 2)
+    y += 40
+    y = draw_block(content["closing"],  close_font, text_sub,  y, W - pad * 2)
 
-    course_font = get_font(42)
+    # ── コース一覧（右下） ──
+    course_font = get_font(40)
+    lh_c = course_font.getbbox("あ")[3] + 20
+    n = len(content["courses"])
+
+    right_pad = 80
+    max_cw = max(course_font.getbbox(f"・{c}")[2] for c in content["courses"])
+    x_left  = W - right_pad - max_cw
+    x_right = W - right_pad
+
+    bottom_margin = 110
+    block_h = lh_c * n
+    y_top = H - bottom_margin - block_h - 50  # 上divider位置
+
+    draw.line([(x_left, y_top), (x_right, y_top)], fill=line_color, width=1)
+    y_c = y_top + 20
     for course in content["courses"]:
-        draw.text((W // 2, y), course, font=course_font, fill=text_dark, anchor="mt")
-        y += course_font.getbbox("あ")[3] + 20
-
-    y += 30
-    draw_divider(y)
-
-    # ── ブランドタグ（下部） ──
-    tag_font = get_font(34)
-    draw.text((W // 2, H - 80), "@bemolle_diet", font=tag_font, fill=text_mid, anchor="mm")
+        draw.text((x_left, y_c), f"・{course}", font=course_font, fill=text_main, anchor="lt")
+        y_c += lh_c
+    draw.line([(x_left, y_c + 8), (x_right, y_c + 8)], fill=line_color, width=1)
 
     buf = BytesIO()
     img.save(buf, format="JPEG", quality=92)
     return buf.getvalue()
 
 
-# ── 4. imgbb にアップロード ────────────────────────────────────
+# ── 5. imgbb にアップロード ────────────────────────────────────
 def upload_to_imgbb(image_bytes: bytes) -> str:
     b64 = base64.b64encode(image_bytes).decode()
     r = requests.post("https://api.imgbb.com/1/upload", data={
@@ -226,7 +289,7 @@ def upload_to_imgbb(image_bytes: bytes) -> str:
     return r.json()["data"]["url"]
 
 
-# ── 5. Instagram Stories に投稿 ───────────────────────────────
+# ── 6. Instagram Stories に投稿 ───────────────────────────────
 def post_to_stories(ig_user_id: str, image_url: str) -> str:
     r = requests.post(f"{META_API}/{ig_user_id}/media", data={
         "image_url": image_url,
@@ -244,7 +307,7 @@ def post_to_stories(ig_user_id: str, image_url: str) -> str:
     return r.json()["id"]
 
 
-# ── 6. LINE通知 ───────────────────────────────────────────────
+# ── 7. LINE通知 ───────────────────────────────────────────────
 def notify(msg: str) -> None:
     try:
         requests.post(
