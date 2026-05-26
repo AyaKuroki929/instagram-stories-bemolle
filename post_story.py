@@ -23,6 +23,8 @@ LINE_TOKEN     = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+USED_PHOTOS_FILE = "used_photos.json"
+COOLDOWN_DAYS    = 7
 GDRIVE_FOLDER        = "18K4hZUjbBH3V1XJjiSNNfss6GZnaTNqV"  # ベモーレ ストーリー素材（ルート）
 GDRIVE_FOLDER_SLIM   = "170R8MxD_ByugDmxctVQbpmY2p3nXVDK8"  # 痩身
 GDRIVE_FOLDER_FACIAL = "1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj"  # 肌質改善
@@ -40,6 +42,31 @@ FONT_PATHS = [
 COURSES_SLIM   = ["全身痩身12回コース", "全身痩身18回コース", "全身痩身24回コース"]
 COURSES_FACIAL = ["３ヶ月肌質改善プログラム", "６ヶ月肌質改善プログラム"]
 COURSES_TRIAL  = ["全身痩身体験", "肌質改善体験"]
+
+
+def load_used_photos() -> dict[str, str]:
+    """使用済み写真IDと使用日時を読み込む（7日以上前は自動除外）"""
+    if not os.path.exists(USED_PHOTOS_FILE):
+        return {}
+    try:
+        with open(USED_PHOTOS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        cutoff = datetime.now(JST) - timedelta(days=COOLDOWN_DAYS)
+        return {fid: ts for fid, ts in data.items()
+                if datetime.fromisoformat(ts) > cutoff}
+    except Exception:
+        return {}
+
+
+def save_used_photo(file_id: str) -> None:
+    """使用した写真IDを used_photos.json に記録する"""
+    used = load_used_photos()
+    used[file_id] = datetime.now(JST).isoformat()
+    try:
+        with open(USED_PHOTOS_FILE, "w", encoding="utf-8") as f:
+            json.dump(used, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"used_photos.json 保存失敗: {e}", file=sys.stderr)
 
 
 def get_font(size: int) -> ImageFont.FreeTypeFont:
@@ -82,6 +109,7 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
 
         # 優先フォルダから順に写真を探す
         auth_headers = {"Authorization": f"Bearer {token}"}
+        used = load_used_photos()
         for folder_id in folder_ids:
             r2 = requests.get(
                 "https://www.googleapis.com/drive/v3/files",
@@ -94,17 +122,23 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             )
             r2.raise_for_status()
             files = r2.json().get("files", [])
-            if files:
-                chosen = random.choice(files)
-                r3 = requests.get(
-                    f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
-                    headers=auth_headers,
-                    params={"alt": "media"},
-                    timeout=30,
-                )
-                r3.raise_for_status()
-                print(f"Drive写真: {chosen['name']}")
-                return r3.content
+            if not files:
+                continue
+            # 直近7日以内に使った写真を除外。全て使用済みならフォルダ全体から選ぶ
+            fresh = [f for f in files if f["id"] not in used]
+            candidates = fresh if fresh else files
+            chosen = random.choice(candidates)
+            r3 = requests.get(
+                f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
+                headers=auth_headers,
+                params={"alt": "media"},
+                timeout=30,
+            )
+            r3.raise_for_status()
+            save_used_photo(chosen["id"])
+            label = "" if fresh else "（全使用済みのためリセット）"
+            print(f"Drive写真: {chosen['name']}{label}")
+            return r3.content
 
         return None
     except Exception as e:
