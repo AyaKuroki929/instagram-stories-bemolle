@@ -7,6 +7,7 @@ import json
 import os
 import random
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 
@@ -103,16 +104,21 @@ def generate_content(today: datetime) -> dict:
   "closing": "心待ちにしている一言（季節・気遣い含む、1文）"
 }}"""
 
-    r = requests.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        params={"key": GEMINI_KEY},
-        json={
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.9},
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
+    for attempt in range(3):
+        r = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            params={"key": GEMINI_KEY},
+            json={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.9},
+            },
+            timeout=30,
+        )
+        if r.status_code == 429 and attempt < 2:
+            time.sleep(30)
+            continue
+        r.raise_for_status()
+        break
     raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
     start, end = raw.find("{"), raw.rfind("}") + 1
     result = json.loads(raw[start:end])
