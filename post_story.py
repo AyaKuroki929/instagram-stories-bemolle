@@ -509,6 +509,22 @@ def post_to_stories(ig_user_id: str, image_url: str) -> str:
     r.raise_for_status()
     creation_id = r.json()["id"]
 
+    # Instagramのコンテナ処理完了を待つ（最大60秒）
+    for attempt in range(12):
+        time.sleep(5)
+        status_r = requests.get(f"{META_API}/{creation_id}", params={
+            "fields": "status_code",
+            "access_token": META_TOKEN,
+        }, timeout=15)
+        if status_r.ok:
+            status = status_r.json().get("status_code", "")
+            print(f"  コンテナ状態: {status} (試行{attempt+1})")
+            if status == "FINISHED":
+                break
+            if status == "ERROR":
+                raise Exception("コンテナ処理エラー（Instagram側）")
+        # IN_PROGRESS or unknown → 待機継続
+
     r = requests.post(f"{META_API}/{ig_user_id}/media_publish", data={
         "creation_id": creation_id,
         "access_token": META_TOKEN,
