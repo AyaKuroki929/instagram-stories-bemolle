@@ -429,7 +429,7 @@ def build_image(content: dict, today: datetime) -> bytes:
            残りが3文字以下になる場合は折り返しを見送り、次の区切りまで待つ（「ね。」「す。」防止）
         """
         HARD = frozenset("。、")
-        SOFT = frozenset("にをがはと")  # 「で」は複合語(できる/ている等)の途中になりやすいため除外
+        SOFT = frozenset("にをがはとり")  # 「で」は複合語除外。「り」はゆっくり・しっかり等の語末で自然な折り返し点
         half_w = max_w * 0.40
         MIN_REMAIN = 4
 
@@ -445,9 +445,7 @@ def build_image(content: dict, today: datetime) -> bytes:
                 soft_line = None
                 continue
 
-            if ch in SOFT and w >= half_w:
-                soft_line = line
-
+            # オーバーフロー検査を soft_line 更新より先に実行
             if w > max_w and len(line) > 1:
                 if soft_line and len(soft_line) < len(line):
                     remaining = line[len(soft_line):]
@@ -455,11 +453,17 @@ def build_image(content: dict, today: datetime) -> bytes:
                         lines.append(soft_line)
                         line = remaining
                         soft_line = None
-                    # else: 残りが3文字以下 → 少しはみ出しを許容して次のHARDまで待つ
+                        continue  # soft_line 更新スキップ
+                    # 残りが短すぎ → はみ出し許容（soft_line 更新もスキップ）
                 else:
                     lines.append(line[:-1])
                     line = ch
                     soft_line = None
+                continue  # オーバーフロー後は soft_line を更新しない
+
+            # オーバーフローなしのときだけ soft_line を更新
+            if ch in SOFT and w >= half_w:
+                soft_line = line
 
         if line:
             lines.append(line)
