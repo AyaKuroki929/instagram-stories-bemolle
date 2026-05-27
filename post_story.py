@@ -316,6 +316,59 @@ def generate_sunday_content(today: datetime) -> dict:
 
 
 # ── 3b. 平日コンテンツ生成（Claude Haiku） ───────────────────────
+# ── 3c. 大阪の天気取得（Open-Meteo・APIキー不要） ────────────────
+def get_weather(hour: int = 7) -> str | None:
+    """大阪（谷町九丁目）の指定時刻の天気を日本語で返す。失敗時はNone。"""
+    WMO = {
+        0: "快晴",
+        1: "晴れ",
+        2: "晴れのち曇り",
+        3: "曇り",
+        45: "霧",
+        48: "霧",
+        51: "小雨",
+        53: "雨",
+        55: "強い雨",
+        61: "小雨",
+        63: "雨",
+        65: "強い雨",
+        71: "小雪",
+        73: "雪",
+        75: "大雪",
+        77: "霰",
+        80: "にわか雨",
+        81: "雨",
+        82: "激しい雨",
+        85: "にわか雪",
+        86: "大雪",
+        95: "雷雨",
+        96: "雷雨",
+        99: "激しい雷雨",
+    }
+    try:
+        r = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": 34.665,
+                "longitude": 135.521,
+                "hourly": "temperature_2m,weathercode",
+                "timezone": "Asia/Tokyo",
+                "forecast_days": 1,
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json()
+        code = data["hourly"]["weathercode"][hour]
+        temp = round(data["hourly"]["temperature_2m"][hour])
+        desc = WMO.get(code, "曇り")
+        print(f"天気: {desc}・{temp}℃（{hour}時・大阪）")
+        return f"{desc}・{temp}℃"
+    except Exception as e:
+        print(f"天気取得失敗（スキップ）: {e}", file=sys.stderr)
+        return None
+
+
 def generate_content(today: datetime) -> dict:
     month   = today.month
     day     = today.day
@@ -337,6 +390,10 @@ def generate_content(today: datetime) -> dict:
 
     courses_str = "\n".join(f"・{c}" for c in course_pool)
 
+    # 大阪の実際の天気を取得
+    weather = get_weather(hour=7)
+    weather_line = f"\n今日の大阪の天気：{weather}（7時時点）" if weather else ""
+
     # 満席状況をPython側で確定（AI任せにしない）
     status = random.choices(
         [
@@ -350,11 +407,11 @@ def generate_content(today: datetime) -> dict:
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
 以下のルールに従い、今日のInstagramストーリー1枚目の文章をJSONで出力してください。
 
-今日：{month}月{day}日（{weekday}曜日）・{season}
+今日：{month}月{day}日（{weekday}曜日）・{season}{weather_line}
 
 【1枚目の構成ルール】
 ① 朝の挨拶（1〜2文。「ベモーレです」は不要。自然な挨拶のみ）
-② ご来店を心待ちにしていることが伝わる一言（季節・天気・気遣いなど、毎回変える）
+② ご来店を心待ちにしていることが伝わる一言（実際の天気が参考になれば自然に触れる。雨なら必ず触れる。晴れや平凡な天気なら季節・気遣いでも可。毎回変える）
 
 【文章ルール（最重要）】
 ・「ベモーレ」はカタカナ表記のみ（Bemolleは使わない）
