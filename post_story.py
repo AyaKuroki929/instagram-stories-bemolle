@@ -379,9 +379,22 @@ def generate_content(today: datetime) -> dict:
     elif month in (6, 7, 8):  season = "夏"
     else:                      season = "秋"
 
+    # 満席状況をPython側で確定（AI任せにしない）
+    status = random.choices(
+        [
+            "本日もリピーター様、ご新規様で満席となっております。",
+            "本日もリピーター様で満席となっております。",
+            "本日もリピーター様、ご新規様にお越しいただきます。",
+        ],
+        weights=[40, 40, 20],
+    )[0]
+
+    # 「ご新規様」が含まれる日は必ず体験メニューを入れる
+    has_new_guest = "ご新規様" in status
+
     slim_pick   = random.sample(COURSES_SLIM, k=random.randint(1, 2))
     facial_pick = random.sample(COURSES_FACIAL, k=1)
-    include_new = random.random() < 0.4
+    include_new = has_new_guest or random.random() < 0.4
     if include_new:
         trial_pick  = [random.choice(COURSES_TRIAL)]
         course_pool = trial_pick + slim_pick[:1] + facial_pick[:1]
@@ -393,16 +406,6 @@ def generate_content(today: datetime) -> dict:
     # 大阪の実際の天気を取得
     weather = get_weather(hour=7)
     weather_line = f"\n今日の大阪の天気：{weather}（7時時点）" if weather else ""
-
-    # 満席状況をPython側で確定（AI任せにしない）
-    status = random.choices(
-        [
-            "本日もリピーター様、ご新規様で満席となっております。",
-            "本日もリピーター様で満席となっております。",
-            "本日もリピーター様、ご新規様にお越しいただきます。",
-        ],
-        weights=[40, 40, 20],
-    )[0]
 
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
 以下のルールに従い、今日のInstagramストーリー1枚目の文章をJSONで出力してください。
