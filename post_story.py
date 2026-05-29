@@ -389,15 +389,25 @@ def generate_content(today: datetime) -> dict:
         weights=[40, 40, 20],
     )[0]
 
-    # 「ご新規様」が含まれる日は必ず体験メニューを入れる
+    # 「ご新規様」が含まれる日は必ず体験メニュー、含まれない日は絶対に入れない
     has_new_guest = "ご新規様" in status
 
     slim_pick   = random.sample(COURSES_SLIM, k=random.randint(1, 2))
     facial_pick = random.sample(COURSES_FACIAL, k=1)
-    include_new = has_new_guest or random.random() < 0.4
-    if include_new:
-        trial_pick  = [random.choice(COURSES_TRIAL)]
-        course_pool = trial_pick + slim_pick[:1] + facial_pick[:1]
+
+    if has_new_guest:
+        # 痩身体験・肌質体験の両方／片方をランダムに（両方多め）
+        trial_choice = random.choices(
+            ["both", "slim_only", "facial_only"],
+            weights=[60, 20, 20],
+        )[0]
+        if trial_choice == "both":
+            extra = random.choice([slim_pick[0], facial_pick[0]])
+            course_pool = ["全身痩身体験", "肌質改善体験", extra]
+        elif trial_choice == "slim_only":
+            course_pool = ["全身痩身体験"] + slim_pick[:1] + facial_pick[:1]
+        else:
+            course_pool = ["肌質改善体験"] + slim_pick[:1] + facial_pick[:1]
     else:
         course_pool = slim_pick + facial_pick
 
