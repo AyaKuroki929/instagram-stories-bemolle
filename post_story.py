@@ -393,7 +393,7 @@ def generate_content(today: datetime) -> dict:
     has_new_guest = "ご新規様" in status
 
     slim_pick   = random.sample(COURSES_SLIM, k=random.randint(1, 2))
-    facial_pick = random.sample(COURSES_FACIAL, k=1)
+    facial_pick = random.sample(COURSES_FACIAL, k=random.randint(1, 2))
 
     if has_new_guest:
         # 痩身体験・肌質体験の両方／片方をランダムに
