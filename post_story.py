@@ -637,6 +637,38 @@ def post_to_stories(ig_user_id: str, image_url: str) -> str:
     return r.json()["id"]
 
 
+# ── 6.4. トークン期限チェック（残り14日でLINE警告）─────────────
+def check_token_expiry_warning() -> None:
+    """Meta access token の期限が14日以内なら再発行手順をLINE通知"""
+    try:
+        r = requests.get(f"{META_API}/debug_token", params={
+            "input_token": META_TOKEN,
+            "access_token": META_TOKEN,
+        }, timeout=10)
+        if not r.ok:
+            return
+        expires_at = r.json().get("data", {}).get("expires_at", 0)
+        if not expires_at:
+            return  # 無期限トークン
+        remaining = (expires_at - datetime.now(timezone.utc).timestamp()) / 86400
+        if remaining <= 14:
+            expiry_jst = datetime.fromtimestamp(expires_at, tz=timezone.utc).astimezone(JST)
+            notify(
+                f"⚠️ Meta access token 期限間近\n"
+                f"残り {int(remaining)} 日（期限: {expiry_jst.strftime('%Y-%m-%d %H:%M')} JST）\n\n"
+                f"再発行手順:\n"
+                f"1. business.facebook.com/settings/system_users\n"
+                f"2. bemolle-storiesbot → トークンを生成\n"
+                f"3. BemolleStories / 60日間 / 5権限チェック → 生成\n"
+                f"4. GitHub Secret META_ACCESS_TOKEN_STORIES に貼り付け"
+            )
+            print(f"トークン期限警告: 残り{int(remaining)}日")
+        else:
+            print(f"トークン期限: 残り{int(remaining)}日")
+    except Exception as e:
+        print(f"トークン期限チェック失敗（投稿継続）: {e}", file=sys.stderr)
+
+
 # ── 6.5. 二重投稿防止（idempotency）─────────────────────────────
 def already_posted_today(ig_user_id: str) -> bool:
     """今日(JST)すでにストーリー投稿があれば True。API失敗時は False（fail-open）。"""
@@ -688,6 +720,9 @@ def main() -> None:
     except Exception as e:
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nIG ID取得エラー: {e}")
         sys.exit(1)
+
+    # トークン期限間近ならLINE警告（投稿は継続）
+    check_token_expiry_warning()
 
     # 同日二重投稿防止：今日すでに投稿があればクリーン終了
     if already_posted_today(ig_id):
