@@ -1,0 +1,44 @@
+name: Count Drive Photos
+
+on:
+  workflow_dispatch:
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Count images per folder
+        env:
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          python3 - <<'PY'
+          import os, requests
+          r = requests.post('https://oauth2.googleapis.com/token', data={
+              'grant_type': 'refresh_token',
+              'refresh_token': os.environ['GOOGLE_REFRESH_TOKEN'],
+              'client_id': os.environ['GOOGLE_CLIENT_ID'],
+              'client_secret': os.environ['GOOGLE_CLIENT_SECRET'],
+          }, timeout=15)
+          token = r.json()['access_token']
+          folders = {
+              'ルート':       '18K4hZUjbBH3V1XJjiSNNfss6GZnaTNqV',
+              '痩身':         '170R8MxD_ByugDmxctVQbpmY2p3nXVDK8',
+              '肌質改善':     '1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj',
+              '共通':         '18eBpPM72QvZrlVwCAmeenfq6pNjoIEQy',
+          }
+          for name, fid in folders.items():
+              r = requests.get('https://www.googleapis.com/drive/v3/files',
+                  headers={'Authorization': f'Bearer {token}'},
+                  params={
+                      'q': f"'{fid}' in parents and mimeType contains 'image/' and trashed=false",
+                      'fields': 'files(id,name)',
+                      'pageSize': 1000,
+                  }, timeout=15)
+              files = r.json().get('files', [])
+              print(f'=== {name}: {len(files)} 枚 ===')
+              for f in files:
+                  print(f'  - {f["name"]}')
+              print()
+          PY
