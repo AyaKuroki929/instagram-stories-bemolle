@@ -396,10 +396,10 @@ def generate_content(today: datetime) -> dict:
     facial_pick = random.sample(COURSES_FACIAL, k=1)
 
     if has_new_guest:
-        # 痩身体験・肌質体験の両方／片方をランダムに（両方多め）
+        # 痩身体験・肌質体験の両方／片方をランダムに
         trial_choice = random.choices(
             ["both", "slim_only", "facial_only"],
-            weights=[60, 20, 20],
+            weights=[40, 30, 30],
         )[0]
         if trial_choice == "both":
             extra = random.choice([slim_pick[0], facial_pick[0]])
