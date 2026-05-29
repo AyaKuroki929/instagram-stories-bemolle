@@ -1,9 +1,11 @@
 name: Daily Instagram Story - @bemolle_diet
 
 on:
+  schedule:
+    - cron: "0 22 * * *"  # 7:00 JST バックアップ（idempotency判定で重複投稿は防止）
   workflow_dispatch:
   repository_dispatch:
-    types: [daily_story]  # cron-job.orgからの発火（単一トリガー）
+    types: [daily_story]  # cron-job.orgからの発火（主系）
 
 permissions:
   contents: write  # used_photos.json を main にプッシュするため

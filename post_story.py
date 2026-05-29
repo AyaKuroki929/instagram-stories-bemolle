@@ -637,6 +637,33 @@ def post_to_stories(ig_user_id: str, image_url: str) -> str:
     return r.json()["id"]
 
 
+# ── 6.5. 二重投稿防止（idempotency）─────────────────────────────
+def already_posted_today(ig_user_id: str) -> bool:
+    """今日(JST)すでにストーリー投稿があれば True。API失敗時は False（fail-open）。"""
+    try:
+        r = requests.get(f"{META_API}/{ig_user_id}/stories", params={
+            "fields": "id,timestamp",
+            "access_token": META_TOKEN,
+        }, timeout=15)
+        if not r.ok:
+            print(f"stories取得失敗（投稿継続）: {r.status_code} {r.text[:200]}", file=sys.stderr)
+            return False
+        today_jst = datetime.now(JST).date()
+        for story in r.json().get("data", []):
+            ts = story.get("timestamp", "")
+            try:
+                story_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if story_dt.astimezone(JST).date() == today_jst:
+                    print(f"既存ストーリー検出: id={story['id']} timestamp={ts}")
+                    return True
+            except Exception:
+                continue
+        return False
+    except Exception as e:
+        print(f"stories取得例外（投稿継続）: {e}", file=sys.stderr)
+        return False
+
+
 # ── 7. LINE通知 ───────────────────────────────────────────────
 def notify(msg: str) -> None:
     try:
@@ -661,6 +688,11 @@ def main() -> None:
     except Exception as e:
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nIG ID取得エラー: {e}")
         sys.exit(1)
+
+    # 同日二重投稿防止：今日すでに投稿があればクリーン終了
+    if already_posted_today(ig_id):
+        print("本日のストーリーは投稿済みのためスキップ。")
+        return
 
     try:
         is_sunday = today.weekday() == 6
