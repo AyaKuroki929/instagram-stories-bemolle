@@ -498,7 +498,7 @@ def build_image(content: dict, today: datetime) -> bytes:
 
     def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
         """
-        1. 。・、の後は必ず改行
+        1. 句点。の後は必ず改行。読点、の後も改行するが、直前が短すぎる時は見送る
         2. 行が40%を超えたら助詞（で・に・を・が・は・と）の後を潜在的な改行点として記録
         3. max_w 超過時に、残り4文字以上になる助詞位置で折り返し
            残りが3文字以下になる場合は折り返しを見送り、次の区切りまで待つ（「ね。」「す。」防止）
@@ -517,6 +517,9 @@ def build_image(content: dict, today: datetime) -> bytes:
             w = font.getbbox(line)[2]
 
             if ch in HARD:
+                # 読点、で区切ると短すぎる場合は改行せず続け、「先週、」単独行を防ぐ
+                if ch == "、" and len(line) < MIN_REMAIN:
+                    continue
                 lines.append(line)
                 line = ""
                 soft_line = None
@@ -550,9 +553,10 @@ def build_image(content: dict, today: datetime) -> bytes:
             lines.append(line)
 
         # 短すぎる末尾行（MIN_REMAIN未満）を前行にマージ（「す。」「ね。」防止）
+        # ただし前行が句点。で完結している場合は文をまたいで繋げない（句点での改行を守る）
         merged = []
         for ln in lines:
-            if merged and len(ln) < MIN_REMAIN:
+            if merged and len(ln) < MIN_REMAIN and not merged[-1].endswith("。"):
                 merged[-1] = merged[-1] + ln
             else:
                 merged.append(ln)
