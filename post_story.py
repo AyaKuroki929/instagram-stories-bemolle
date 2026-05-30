@@ -256,14 +256,22 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
         return None
 
 
+# ── 季節判定（月＋日）─────────────────────────────────────────
+def get_season(today: datetime) -> str:
+    """月単位だと5月末でも『春』と出てしまうため、日付まで見て季節感を返す。"""
+    md = (today.month, today.day)
+    if   md >= (12, 1) or md < (2, 18):  return "冬"
+    elif md < (5, 16):                   return "春"
+    elif md < (6, 21):                   return "初夏"
+    elif md < (9, 8):                    return "夏"
+    elif md < (11, 16):                  return "秋"
+    else:                                return "冬"
+
+
 # ── 3a. 日曜定休日コンテンツ生成 ────────────────────────────────
 def generate_sunday_content(today: datetime) -> dict:
-    month = today.month
-
-    if month in (12, 1, 2):   season = "冬"
-    elif month in (3, 4, 5):  season = "春"
-    elif month in (6, 7, 8):  season = "夏"
-    else:                      season = "秋"
+    month  = today.month
+    season = get_season(today)
 
     # 内容タイプをランダム選択
     result_type = random.choices(
@@ -374,10 +382,7 @@ def generate_content(today: datetime) -> dict:
     day     = today.day
     weekday = ["月", "火", "水", "木", "金", "土", "日"][today.weekday()]
 
-    if month in (12, 1, 2):   season = "冬"
-    elif month in (3, 4, 5):  season = "春"
-    elif month in (6, 7, 8):  season = "夏"
-    else:                      season = "秋"
+    season  = get_season(today)
 
     # 満席状況をPython側で確定（AI任せにしない）
     status = random.choices(
@@ -497,9 +502,11 @@ def build_image(content: dict, today: datetime) -> bytes:
         2. 行が40%を超えたら助詞（で・に・を・が・は・と）の後を潜在的な改行点として記録
         3. max_w 超過時に、残り4文字以上になる助詞位置で折り返し
            残りが3文字以下になる場合は折り返しを見送り、次の区切りまで待つ（「ね。」「す。」防止）
+        4. 助詞が無くハードカットする場合、行末に残る接頭辞お/ごは次行へ送る（「お声」を割らない）
         """
         HARD = frozenset("。、")
         SOFT = frozenset("にをがはとり")  # 「で」は複合語除外。「り」はゆっくり・しっかり等の語末で自然な折り返し点
+        PREFIX = frozenset("おご")  # 「お声」「ご来店」を語中で割らないための接頭辞
         half_w = max_w * 0.40
         MIN_REMAIN = 4
 
@@ -526,8 +533,12 @@ def build_image(content: dict, today: datetime) -> bytes:
                         continue  # soft_line 更新スキップ
                     # 残りが短すぎ → はみ出し許容（soft_line 更新もスキップ）
                 else:
-                    lines.append(line[:-1])
-                    line = ch
+                    head, tail = line[:-1], ch
+                    # 行末に残る接頭辞お/ごは次行へ送り、「お声」等を割らない
+                    if len(head) > 1 and head[-1] in PREFIX:
+                        head, tail = head[:-1], head[-1] + tail
+                    lines.append(head)
+                    line = tail
                     soft_line = None
                 continue  # オーバーフロー後は soft_line を更新しない
 
