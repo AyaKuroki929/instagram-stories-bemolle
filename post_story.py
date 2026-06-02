@@ -54,8 +54,8 @@ GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 USED_PHOTOS_FILE     = "used_photos.json"
 COOLDOWN_DAYS        = 14  # 同じ写真を使わない日数
-SIMILARITY_DAYS      = 3   # 類似写真を避ける日数
-SIMILARITY_THRESHOLD = 8   # ahashのハミング距離（64ビット中・これ以下を「似ている」と判定）
+SIMILARITY_DAYS      = 7   # 類似写真を避ける日数（直近1週間と見比べる）
+SIMILARITY_THRESHOLD = 12  # ahashのハミング距離（64ビット中・これ以下を「似ている」と判定）。実測で酷似ペア=9・別写真=20以上のため中間の12に設定
 GDRIVE_FOLDER        = "18K4hZUjbBH3V1XJjiSNNfss6GZnaTNqV"  # ベモーレ ストーリー素材（ルート）
 GDRIVE_FOLDER_SLIM   = "170R8MxD_ByugDmxctVQbpmY2p3nXVDK8"  # 痩身
 GDRIVE_FOLDER_FACIAL = "1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj"  # 肌質改善
@@ -203,52 +203,47 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             # 14日クールダウン除外。全使用済みならフォルダ全体から選ぶ
             fresh = [f for f in files if f["id"] not in used]
             candidates = fresh if fresh else files
-            random.shuffle(candidates)
+            reset_label = "" if fresh else "（全使用済みのためリセット）"
 
-            fallback = None
-            for candidate in candidates:
-                # サムネイルをダウンロードして類似チェック
-                if recent_h:
-                    thumb_url = candidate.get("thumbnailLink")
+            # 類似回避は「直近と最も似ていない候補」を選ぶ（max-min距離方式）。
+            # 旧方式の「しきい値を満たす最初の1枚」だと、しきい値ぎりぎり（距離9 vs 閾値8）の
+            # 酷似写真がすり抜けて数日連続で似た写真が出ていたため、全候補を採点して最大化する。
+            if recent_h and len(candidates) > 1:
+                scored = []
+                for c in candidates:
+                    score = 64  # サムネ取得失敗＝未知。十分に異なる扱い
+                    thumb_url = c.get("thumbnailLink")
                     if thumb_url:
                         try:
                             tr = requests.get(thumb_url, timeout=10)
                             if tr.status_code == 200:
                                 h = photo_ahash(tr.content)
-                                if any(hash_distance(h, rh) <= SIMILARITY_THRESHOLD for rh in recent_h):
-                                    if fallback is None:
-                                        fallback = candidate
-                                    continue  # 似ているのでスキップ
+                                if h:
+                                    score = min(hash_distance(h, rh) for rh in recent_h)
                         except Exception:
-                            pass  # サムネ取得失敗は無視して続行
+                            pass  # サムネ取得失敗は無視（score=64のまま）
+                    scored.append((score, c))
+                best = max(s for s, _ in scored)
+                chosen = random.choice([c for s, c in scored if s == best])  # 同点はランダム
+                if best <= SIMILARITY_THRESHOLD:
+                    print(f"⚠️ 全候補が直近と類似（最大min距離={best}≤{SIMILARITY_THRESHOLD}）。"
+                          f"最も差がある写真を選択（要：素材追加）")
+                else:
+                    print(f"類似回避OK: 直近との最小ahash距離={best}の写真を選択")
+            else:
+                chosen = random.choice(candidates)
 
-                # 類似でない（またはチェック不可）→ フル画像をダウンロード
-                r3 = requests.get(
-                    f"https://www.googleapis.com/drive/v3/files/{candidate['id']}",
-                    headers=auth_headers,
-                    params={"alt": "media"},
-                    timeout=30,
-                )
-                r3.raise_for_status()
-                h_full = photo_ahash(r3.content)
-                save_used_photo(candidate["id"], h_full)
-                label = "" if fresh else "（全使用済みのためリセット）"
-                print(f"Drive写真: {candidate['name']}{label}")
-                return r3.content
-
-            # 全候補が似ていた場合 → フォールバック（最初の候補を使用）
-            if fallback:
-                r3 = requests.get(
-                    f"https://www.googleapis.com/drive/v3/files/{fallback['id']}",
-                    headers=auth_headers,
-                    params={"alt": "media"},
-                    timeout=30,
-                )
-                r3.raise_for_status()
-                h_full = photo_ahash(r3.content)
-                save_used_photo(fallback["id"], h_full)
-                print(f"Drive写真: {fallback['name']}（類似のみのためフォールバック）")
-                return r3.content
+            r3 = requests.get(
+                f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
+                headers=auth_headers,
+                params={"alt": "media"},
+                timeout=30,
+            )
+            r3.raise_for_status()
+            h_full = photo_ahash(r3.content)
+            save_used_photo(chosen["id"], h_full)
+            print(f"Drive写真: {chosen['name']}{reset_label}")
+            return r3.content
 
         return None
     except Exception as e:
