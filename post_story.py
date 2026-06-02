@@ -53,7 +53,8 @@ GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 USED_PHOTOS_FILE     = "used_photos.json"
-FALLBACK_PHOTO_FILE  = "fallback_photo.jpg"  # Drive障害時に使う実写真キャッシュ（グラデ背景を出さないため）
+FALLBACK_DIR         = "fallback_photos"  # Drive障害時に使う実写真キャッシュ（複数枚・グラデ背景を出さないため）
+FALLBACK_MAX         = 5                   # 予備写真の最大保持数（達したら打ち止め＝git肥大化防止）
 COOLDOWN_DAYS        = 14  # 同じ写真を使わない日数
 SIMILARITY_DAYS      = 7   # 類似写真を避ける日数（直近1週間と見比べる）
 SIMILARITY_THRESHOLD = 12  # ahashのハミング距離（64ビット中・これ以下を「似ている」と判定）。実測で酷似ペア=9・別写真=20以上のため中間の12に設定
@@ -144,30 +145,42 @@ def save_used_photo(file_id: str, photo_hash: str = "") -> None:
 
 
 def save_fallback_photo(img_bytes: bytes) -> None:
-    """Drive取得成功時に実写真を1枚だけリポジトリにキャッシュ。
-    Drive障害時の背景に使い、グラデーション背景を出さないための保険。
-    1枚あれば十分なので既にあれば更新しない（gitの肥大化防止）。手動差し替えも可。"""
+    """Drive取得成功時に実写真を最大FALLBACK_MAX枚までリポジトリに貯める（Drive障害時の背景用）。
+    障害日にランダム表示するための多様性を確保するため、既存予備と似すぎる写真は追加しない。
+    規定数に達したら打ち止め（gitの肥大化防止）。ファイル名にahashを使い重複も自動回避。"""
     try:
-        if os.path.exists(FALLBACK_PHOTO_FILE) and os.path.getsize(FALLBACK_PHOTO_FILE) > 0:
+        os.makedirs(FALLBACK_DIR, exist_ok=True)
+        existing = [f for f in os.listdir(FALLBACK_DIR) if f.endswith(".jpg")]
+        if len(existing) >= FALLBACK_MAX:
+            return  # 既に規定数＝打ち止め
+        new_hash = photo_ahash(img_bytes)
+        if not new_hash:
             return
-        with open(FALLBACK_PHOTO_FILE, "wb") as f:
+        # 多様性のため、既存予備とahashが近い（似ている）なら追加しない
+        for fn in existing:
+            if hash_distance(new_hash, os.path.splitext(fn)[0]) <= SIMILARITY_THRESHOLD:
+                return
+        with open(os.path.join(FALLBACK_DIR, f"{new_hash}.jpg"), "wb") as f:
             f.write(img_bytes)
-        print("fallback_photo.jpg を初回作成（Drive障害時の予備背景）")
+        print(f"予備写真を追加（{len(existing) + 1}/{FALLBACK_MAX}枚目）")
     except Exception as e:
-        print(f"fallback_photo保存失敗: {e}", file=sys.stderr)
+        print(f"予備写真保存失敗: {e}", file=sys.stderr)
 
 
 def load_fallback_photo() -> bytes | None:
-    """キャッシュ済みの予備写真を返す（Drive取得不可時にグラデを避ける）"""
+    """貯めた予備写真からランダムに1枚返す（Drive取得不可時にグラデを避ける）"""
     try:
-        if os.path.exists(FALLBACK_PHOTO_FILE):
-            with open(FALLBACK_PHOTO_FILE, "rb") as f:
-                data = f.read()
-            if data:
-                print("Drive取得不可 → 予備写真(fallback_photo.jpg)で代替")
-                return data
+        if os.path.isdir(FALLBACK_DIR):
+            files = [f for f in os.listdir(FALLBACK_DIR) if f.endswith(".jpg")]
+            if files:
+                pick = random.choice(files)
+                with open(os.path.join(FALLBACK_DIR, pick), "rb") as f:
+                    data = f.read()
+                if data:
+                    print(f"Drive取得不可 → 予備写真{len(files)}枚からランダム選択: {pick}")
+                    return data
     except Exception as e:
-        print(f"fallback_photo読込失敗: {e}", file=sys.stderr)
+        print(f"予備写真読込失敗: {e}", file=sys.stderr)
     return None
 
 
