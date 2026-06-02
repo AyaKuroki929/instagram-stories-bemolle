@@ -53,6 +53,7 @@ GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 USED_PHOTOS_FILE     = "used_photos.json"
+FALLBACK_PHOTO_FILE  = "fallback_photo.jpg"  # Drive障害時に使う実写真キャッシュ（グラデ背景を出さないため）
 COOLDOWN_DAYS        = 14  # 同じ写真を使わない日数
 SIMILARITY_DAYS      = 7   # 類似写真を避ける日数（直近1週間と見比べる）
 SIMILARITY_THRESHOLD = 12  # ahashのハミング距離（64ビット中・これ以下を「似ている」と判定）。実測で酷似ペア=9・別写真=20以上のため中間の12に設定
@@ -140,6 +141,34 @@ def save_used_photo(file_id: str, photo_hash: str = "") -> None:
             json.dump(used, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"used_photos.json 保存失敗: {e}", file=sys.stderr)
+
+
+def save_fallback_photo(img_bytes: bytes) -> None:
+    """Drive取得成功時に実写真を1枚だけリポジトリにキャッシュ。
+    Drive障害時の背景に使い、グラデーション背景を出さないための保険。
+    1枚あれば十分なので既にあれば更新しない（gitの肥大化防止）。手動差し替えも可。"""
+    try:
+        if os.path.exists(FALLBACK_PHOTO_FILE) and os.path.getsize(FALLBACK_PHOTO_FILE) > 0:
+            return
+        with open(FALLBACK_PHOTO_FILE, "wb") as f:
+            f.write(img_bytes)
+        print("fallback_photo.jpg を初回作成（Drive障害時の予備背景）")
+    except Exception as e:
+        print(f"fallback_photo保存失敗: {e}", file=sys.stderr)
+
+
+def load_fallback_photo() -> bytes | None:
+    """キャッシュ済みの予備写真を返す（Drive取得不可時にグラデを避ける）"""
+    try:
+        if os.path.exists(FALLBACK_PHOTO_FILE):
+            with open(FALLBACK_PHOTO_FILE, "rb") as f:
+                data = f.read()
+            if data:
+                print("Drive取得不可 → 予備写真(fallback_photo.jpg)で代替")
+                return data
+    except Exception as e:
+        print(f"fallback_photo読込失敗: {e}", file=sys.stderr)
+    return None
 
 
 def get_font(size: int) -> ImageFont.FreeTypeFont:
@@ -242,6 +271,7 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             r3.raise_for_status()
             h_full = photo_ahash(r3.content)
             save_used_photo(chosen["id"], h_full)
+            save_fallback_photo(r3.content)  # 予備写真キャッシュ（Drive障害時の背景）
             print(f"Drive写真: {chosen['name']}{reset_label}")
             return r3.content
 
@@ -459,8 +489,8 @@ def generate_content(today: datetime) -> dict:
 def build_image(content: dict, today: datetime) -> bytes:
     W, H = 1080, 1920
 
-    # 背景：Drive写真 or グラデーション（フォールバック）
-    photo_bytes = get_drive_photo(content["courses"])
+    # 背景：Drive写真 → 取得不可なら予備写真キャッシュ → どちらも無い時だけグラデ
+    photo_bytes = get_drive_photo(content["courses"]) or load_fallback_photo()
     if photo_bytes:
         bg = Image.open(BytesIO(photo_bytes)).convert("RGB")
         bw, bh = bg.size
@@ -476,6 +506,8 @@ def build_image(content: dict, today: datetime) -> bytes:
         text_sub   = (235, 220, 220)
         line_color = (255, 255, 255)
     else:
+        # ここに来るのは「Drive取得不可かつ予備写真も未生成」の初回限定の最終手段
+        print("⚠️ Drive写真も予備写真も無し → グラデ背景（予備写真が出来れば次回以降は回避）", file=sys.stderr)
         img = Image.new("RGB", (W, H))
         tmp = ImageDraw.Draw(img)
         for y in range(H):
