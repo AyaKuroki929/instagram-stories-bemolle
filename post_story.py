@@ -311,6 +311,15 @@ def generate_sunday_content(today: datetime) -> dict:
     month  = today.month
     season = get_season(today)
 
+    # 毎週必ず季節の言葉が入ると定型的でAIっぽいので、約1/3の週だけ季節に触れる
+    mention_season = random.random() < 0.35
+    season_label = f"（{season}）" if mention_season else ""
+    season_rule = (
+        f"・{season}らしい言葉や空気感を自然に一言だけ入れてもいい"
+        if mention_season else
+        "・季節や天気の言葉（春・初夏・夏・秋・冬など）は入れない。毎週同じ季節フレーズで始まるのを避け、感謝や気遣いで自然に書く"
+    )
+
     # 内容タイプをランダム選択
     result_type = random.choices(
         ["general", "skin", "body", "both"],
@@ -327,7 +336,7 @@ def generate_sunday_content(today: datetime) -> dict:
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
 今日は日曜日・定休日です。以下のルールで投稿文をJSONで出力してください。
 
-今日：{month}月（{season}）・日曜日・定休日
+今日：{month}月{season_label}・日曜日・定休日
 
 【構成】
 ① 朝の挨拶（短く。「ベモーレです」は不要）
@@ -336,7 +345,7 @@ def generate_sunday_content(today: datetime) -> dict:
 
 【文章ルール】
 ・「ベモーレ」はカタカナのみ
-・{season}らしい言葉や空気感を自然に一言だけ入れてもいい
+{season_rule}
 ・AIっぽい整いすぎた文章は禁止。黒木（オーナー）がそのまま投稿できる温度感
 ・敬語ベースで柔らかく。短文と中文を混ぜてリズムをつける
 ・誇張・大げさな表現は禁止
@@ -460,14 +469,24 @@ def generate_content(today: datetime) -> dict:
     weather = get_weather(hour=7)
     weather_line = f"\n今日の大阪の天気：{weather}（7時時点）" if weather else ""
 
+    # 毎朝必ず季節の言葉が入ると定型的でAIっぽいので、約1/3の日だけ季節に触れる
+    mention_season = random.random() < 0.35
+    season_label = f"・{season}" if mention_season else ""
+    if mention_season:
+        hook_rule = "② ご来店を心待ちにしていることが伝わる一言（実際の天気が参考になれば自然に触れる。雨なら必ず触れる。晴れや平凡な天気なら季節・気遣いでも可。毎回変える）"
+        closing_hint = "心待ちにしている一言（季節・気遣いなど、1文）"
+    else:
+        hook_rule = "② ご来店を心待ちにしていることが伝わる一言（実際の天気が参考になれば自然に触れる。雨なら天気には触れてよい。ただし季節の言葉（春・初夏・夏・秋・冬など）は使わず、感謝・気遣い・サロンの雰囲気など別の切り口で。毎回変える）"
+        closing_hint = "心待ちにしている一言（季節の言葉は使わない、1文）"
+
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
 以下のルールに従い、今日のInstagramストーリー1枚目の文章をJSONで出力してください。
 
-今日：{month}月{day}日（{weekday}曜日）・{season}{weather_line}
+今日：{month}月{day}日（{weekday}曜日）{season_label}{weather_line}
 
 【1枚目の構成ルール】
 ① 朝の挨拶（1〜2文。「ベモーレです」は不要。自然な挨拶のみ）
-② ご来店を心待ちにしていることが伝わる一言（実際の天気が参考になれば自然に触れる。雨なら必ず触れる。晴れや平凡な天気なら季節・気遣いでも可。毎回変える）
+{hook_rule}
 
 【文章ルール（最重要）】
 ・「ベモーレ」はカタカナ表記のみ（Bemolleは使わない）
@@ -482,7 +501,7 @@ def generate_content(today: datetime) -> dict:
 以下のJSONのみ出力（他は不要）：
 {{
   "greeting": "朝の挨拶（1〜2文）",
-  "closing": "心待ちにしている一言（季節・気遣い含む、1文）"
+  "closing": "{closing_hint}"
 }}"""
 
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
