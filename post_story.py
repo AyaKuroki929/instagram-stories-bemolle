@@ -678,14 +678,26 @@ def upload_to_imgbb(image_bytes: bytes) -> str:
 
 # ── 6. Instagram Stories に投稿 ───────────────────────────────
 def post_to_stories(ig_user_id: str, image_url: str) -> str:
-    r = requests.post(f"{META_API}/{ig_user_id}/media", data={
-        "image_url": image_url,
-        "media_type": "STORIES",
-        "access_token": META_TOKEN,
-    }, timeout=30)
-    if not r.ok:
-        raise Exception(f"{r.status_code} {r.text[:400]}")
-    creation_id = r.json()["id"]
+    # コンテナ作成。Metaのメディア取得が一時的に失敗（code 9004 / subcode 2207052
+    # "media URI doesn't meet requirements"）することがあるため、最大3回リトライする。
+    # 画像・URLが正常でも稀に起きる一時障害で、待って再試行すれば回復することが多い。
+    creation_id = None
+    last_err = ""
+    for attempt in range(3):
+        r = requests.post(f"{META_API}/{ig_user_id}/media", data={
+            "image_url": image_url,
+            "media_type": "STORIES",
+            "access_token": META_TOKEN,
+        }, timeout=30)
+        if r.ok:
+            creation_id = r.json()["id"]
+            break
+        last_err = f"{r.status_code} {r.text[:400]}"
+        print(f"  コンテナ作成失敗（試行{attempt + 1}/3）: {last_err}", file=sys.stderr)
+        if attempt < 2:
+            time.sleep(10)
+    if creation_id is None:
+        raise Exception(last_err)
 
     # Instagramのコンテナ処理完了を待つ（最大60秒）
     for attempt in range(12):
