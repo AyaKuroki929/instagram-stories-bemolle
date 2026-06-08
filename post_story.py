@@ -677,13 +677,23 @@ def upload_to_imgbb(image_bytes: bytes) -> str:
 
 
 # ── 6. Instagram Stories に投稿 ───────────────────────────────
-def post_to_stories(ig_user_id: str, image_url: str) -> str:
-    # コンテナ作成。Metaのメディア取得が一時的に失敗（code 9004 / subcode 2207052
-    # "media URI doesn't meet requirements"）することがあるため、最大3回リトライする。
-    # 画像・URLが正常でも稀に起きる一時障害で、待って再試行すれば回復することが多い。
+def post_to_stories(ig_user_id: str, image_bytes: bytes) -> str:
+    # 投稿が「止まらない」ための多重防御。Metaのメディア取得が一時的に失敗
+    # （code 9004 / subcode 2207052 "media URI doesn't meet requirements"）することがある。
+    # 画像が正常でも稀に起きるため、失敗のたびに画像をアップロードし直して
+    # 「新しいURL」でコンテナを作り直す（今日の手動再実行も新URLで一発成功した）。最大3回。
     creation_id = None
     last_err = ""
     for attempt in range(3):
+        try:
+            image_url = upload_to_imgbb(image_bytes)
+            print(f"画像URL（試行{attempt + 1}/3）: {image_url}")
+        except Exception as e:
+            last_err = f"画像アップロード失敗: {e}"
+            print(f"  {last_err}（試行{attempt + 1}/3）", file=sys.stderr)
+            if attempt < 2:
+                time.sleep(8)
+            continue
         r = requests.post(f"{META_API}/{ig_user_id}/media", data={
             "image_url": image_url,
             "media_type": "STORIES",
@@ -894,14 +904,13 @@ def main() -> None:
 
     try:
         image_bytes = build_image(content, today)
-        image_url   = upload_to_imgbb(image_bytes)
-        print(f"画像URL: {image_url}")
     except Exception as e:
         notify(f"⚠️ @bemolle_diet ストーリー失敗\n画像エラー: {e}")
         sys.exit(1)
 
     try:
-        media_id = post_to_stories(ig_id, image_url)
+        # アップロードはpost_to_stories内で試行ごとに行う（失敗時に新URLで再投稿するため）
+        media_id = post_to_stories(ig_id, image_bytes)
         print(f"投稿完了: media_id={media_id}")
     except Exception as e:
         print(f"Meta APIエラー: {e}", file=sys.stderr)
