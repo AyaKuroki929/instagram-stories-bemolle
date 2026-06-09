@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "0 22 * * *"  # 7:00 JST バックアップ（idempotency判定で重複投稿は防止）
   workflow_dispatch:
+    inputs:
+      force_facial_trial:
+        description: '今日だけ ご新規＋肌質改善体験 を入れる'
+        type: boolean
+        default: false
   repository_dispatch:
     types: [daily_story]  # cron-job.orgからの発火（主系）
 
@@ -41,6 +46,7 @@ jobs:
           GOOGLE_REFRESH_TOKEN:     ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           GOOGLE_CLIENT_ID:         ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET:     ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          STORY_FORCE_FACIAL_TRIAL: ${{ github.event.inputs.force_facial_trial == 'true' && '1' || '' }}
         run: python post_story.py
 
       - name: Save photo rotation log

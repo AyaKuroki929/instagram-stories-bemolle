@@ -89,6 +89,28 @@ def photo_ahash(img_bytes: bytes) -> str:
         return ""
 
 
+_FACE_CASCADE = None
+
+
+def detect_faces(pil_img: "Image.Image") -> list | None:
+    """画像中の顔の矩形 [(x,y,w,h),...] を返す。
+    OpenCV未導入・読み込み失敗時は None（＝判定不能）。検出成功で0件なら []。"""
+    global _FACE_CASCADE
+    try:
+        import cv2
+        import numpy as np
+        if _FACE_CASCADE is None:
+            _FACE_CASCADE = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+        gray = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2GRAY)
+        faces = _FACE_CASCADE.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(28, 28))
+        return [tuple(int(v) for v in f) for f in faces]
+    except Exception as e:
+        print(f"顔検出スキップ（判定不能）: {e}", file=sys.stderr)
+        return None
+
+
 def hash_distance(h1: str, h2: str) -> int:
     if not h1 or not h2:
         return 64
@@ -465,6 +487,13 @@ def generate_content(today: datetime) -> dict:
 
     courses_str = "\n".join(f"・{c}" for c in course_pool)
 
+    # 当日だけの手動指定：新規の肌質改善体験のお客様がいる日などに環境変数で固定する
+    if os.environ.get("STORY_FORCE_FACIAL_TRIAL") == "1":
+        status = "本日もリピーター様、ご新規様にお越しいただきます。"
+        course_pool = ["肌質改善体験"] + slim_pick[:1] + facial_pick[:1]
+        courses_str = "\n".join(f"・{c}" for c in course_pool)
+        print("STORY_FORCE_FACIAL_TRIAL=1 → ご新規＋肌質改善体験で固定")
+
     # 大阪の実際の天気を取得
     weather = get_weather(hour=7)
     weather_line = f"\n今日の大阪の天気：{weather}（7時時点）" if weather else ""
@@ -528,16 +557,35 @@ def build_image(content: dict, today: datetime) -> bytes:
         src = ImageOps.exif_transpose(Image.open(BytesIO(photo_bytes))).convert("RGB")
         bw, bh = src.size
         if bw > bh:
-            # 横写真：拡大して端を切ると人が見切れるので、全体を見せる「ぼかし余白」方式。
-            # 背景＝同じ写真を画面いっぱいに拡大してぼかし、前景＝幅に合わせた全体を中央に置く。
-            bs = max(W / bw, H / bh)
-            bgw, bgh = int(bw * bs), int(bh * bs)
-            bl, bt = (bgw - W) // 2, (bgh - H) // 2
-            bg = src.resize((bgw, bgh), Image.LANCZOS).crop((bl, bt, bl + W, bt + H))
-            bg = bg.filter(ImageFilter.GaussianBlur(45))
-            fh = max(1, round(bh * (W / bw)))
-            fg = src.resize((W, fh), Image.LANCZOS)
-            bg.paste(fg, (0, (H - fh) // 2))
+            # 横写真：中央クロップで端の人が切れるかを顔検出で判断。
+            #  ・切れる（端に顔がある）/判定不能 → 全体を見せる「ぼかし余白」
+            #  ・切れない（顔が中央域内 or 人がいない部屋・風景）→ 拡大して画面に充填
+            keep_w = bh * (W / H)          # 中央クロップで残る元画像の横幅
+            x0 = (bw - keep_w) / 2
+            x1 = x0 + keep_w
+            faces = detect_faces(src)
+            if not faces:                  # None(判定不能) も [] も
+                crop_safe = faces == []    # 顔ゼロ＝部屋/風景とみなし拡大OK、Noneは安全側で全体表示
+            else:
+                crop_safe = all(fx >= x0 and fx + fw <= x1 for (fx, fy, fw, fh) in faces)
+
+            if crop_safe:
+                # 拡大して中央クロップ充填（縦写真と同じ）
+                scale = max(W / bw, H / bh)
+                nw, nh = int(bw * scale), int(bh * scale)
+                resized = src.resize((nw, nh), Image.LANCZOS)
+                left, top = (nw - W) // 2, (nh - H) // 2
+                bg = resized.crop((left, top, left + W, top + H))
+            else:
+                # ぼかし余白で全体表示（端の人を切らない）
+                bs = max(W / bw, H / bh)
+                bgw, bgh = int(bw * bs), int(bh * bs)
+                bl, bt = (bgw - W) // 2, (bgh - H) // 2
+                bg = src.resize((bgw, bgh), Image.LANCZOS).crop((bl, bt, bl + W, bt + H))
+                bg = bg.filter(ImageFilter.GaussianBlur(45))
+                fh = max(1, round(bh * (W / bw)))
+                fg = src.resize((W, fh), Image.LANCZOS)
+                bg.paste(fg, (0, (H - fh) // 2))
         else:
             # 縦・正方形：画面いっぱいに充填（中央クロップ）
             scale = max(W / bw, H / bh)
