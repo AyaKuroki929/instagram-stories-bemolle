@@ -13,7 +13,7 @@ from io import BytesIO
 
 import anthropic
 import requests
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 
 
 def extract_json(text: str) -> dict:
@@ -525,13 +525,26 @@ def build_image(content: dict, today: datetime) -> bytes:
     photo_bytes = get_drive_photo(content["courses"]) or load_fallback_photo()
     if photo_bytes:
         # EXIF Orientationを適用して写真本来の向きに直す（縦写真が横倒しで出るのを防ぐ）
-        bg = ImageOps.exif_transpose(Image.open(BytesIO(photo_bytes))).convert("RGB")
-        bw, bh = bg.size
-        scale = max(W / bw, H / bh)
-        nw, nh = int(bw * scale), int(bh * scale)
-        bg = bg.resize((nw, nh), Image.LANCZOS)
-        left, top = (nw - W) // 2, (nh - H) // 2
-        bg = bg.crop((left, top, left + W, top + H))
+        src = ImageOps.exif_transpose(Image.open(BytesIO(photo_bytes))).convert("RGB")
+        bw, bh = src.size
+        if bw > bh:
+            # 横写真：拡大して端を切ると人が見切れるので、全体を見せる「ぼかし余白」方式。
+            # 背景＝同じ写真を画面いっぱいに拡大してぼかし、前景＝幅に合わせた全体を中央に置く。
+            bs = max(W / bw, H / bh)
+            bgw, bgh = int(bw * bs), int(bh * bs)
+            bl, bt = (bgw - W) // 2, (bgh - H) // 2
+            bg = src.resize((bgw, bgh), Image.LANCZOS).crop((bl, bt, bl + W, bt + H))
+            bg = bg.filter(ImageFilter.GaussianBlur(45))
+            fh = max(1, round(bh * (W / bw)))
+            fg = src.resize((W, fh), Image.LANCZOS)
+            bg.paste(fg, (0, (H - fh) // 2))
+        else:
+            # 縦・正方形：画面いっぱいに充填（中央クロップ）
+            scale = max(W / bw, H / bh)
+            nw, nh = int(bw * scale), int(bh * scale)
+            resized = src.resize((nw, nh), Image.LANCZOS)
+            left, top = (nw - W) // 2, (nh - H) // 2
+            bg = resized.crop((left, top, left + W, top + H))
         # 半透明オーバーレイ（明るい写真・暗い写真どちらでも文字が読める）
         overlay = Image.new("RGBA", (W, H), (0, 0, 0, 110))
         img = Image.alpha_composite(bg.convert("RGBA"), overlay).convert("RGB")
