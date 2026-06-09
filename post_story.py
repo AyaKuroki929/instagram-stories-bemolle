@@ -89,6 +89,17 @@ def photo_ahash(img_bytes: bytes) -> str:
         return ""
 
 
+def is_portrait_photo(f: dict) -> bool:
+    """Driveのメタデータ(width/height)で縦長か判定する。
+    横長（ランドスケープ）は9:16に切ると人物が横倒し・不自然になるので使わない。
+    メタデータが無い画像は判定不能なので許可（True）。"""
+    meta = f.get("imageMediaMetadata") or {}
+    w, h = meta.get("width"), meta.get("height")
+    if w and h:
+        return h >= w  # 縦長 or 正方形のみOK、横長(w>h)は除外
+    return True
+
+
 def hash_distance(h1: str, h2: str) -> int:
     if not h1 or not h2:
         return 64
@@ -233,7 +244,7 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
                 headers=auth_headers,
                 params={
                     "q": f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false",
-                    "fields": "files(id,name,thumbnailLink)",
+                    "fields": "files(id,name,thumbnailLink,imageMediaMetadata(width,height))",
                 },
                 timeout=15,
             )
@@ -241,6 +252,13 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             files = r2.json().get("files", [])
             if not files:
                 continue
+
+            # 横（ランドスケープ）写真は9:16に切ると人物が横倒しになるため除外し、縦・正方形のみ使う
+            portrait = [f for f in files if is_portrait_photo(f)]
+            if not portrait:
+                print(f"  フォルダ{folder_id[:8]}は縦写真なし→次フォルダへ", file=sys.stderr)
+                continue
+            files = portrait
 
             # 14日クールダウン除外。全使用済みならフォルダ全体から選ぶ
             fresh = [f for f in files if f["id"] not in used]
