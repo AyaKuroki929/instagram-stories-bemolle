@@ -13,7 +13,7 @@ from io import BytesIO
 
 import anthropic
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 def extract_json(text: str) -> dict:
@@ -87,17 +87,6 @@ def photo_ahash(img_bytes: bytes) -> str:
         return format(int(bits, 2), "016x")
     except Exception:
         return ""
-
-
-def is_portrait_photo(f: dict) -> bool:
-    """Driveのメタデータ(width/height)で縦長か判定する。
-    横長（ランドスケープ）は9:16に切ると人物が横倒し・不自然になるので使わない。
-    メタデータが無い画像は判定不能なので許可（True）。"""
-    meta = f.get("imageMediaMetadata") or {}
-    w, h = meta.get("width"), meta.get("height")
-    if w and h:
-        return h >= w  # 縦長 or 正方形のみOK、横長(w>h)は除外
-    return True
 
 
 def hash_distance(h1: str, h2: str) -> int:
@@ -244,7 +233,7 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
                 headers=auth_headers,
                 params={
                     "q": f"'{folder_id}' in parents and mimeType contains 'image/' and trashed=false",
-                    "fields": "files(id,name,thumbnailLink,imageMediaMetadata(width,height))",
+                    "fields": "files(id,name,thumbnailLink)",
                 },
                 timeout=15,
             )
@@ -252,13 +241,6 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             files = r2.json().get("files", [])
             if not files:
                 continue
-
-            # 横（ランドスケープ）写真は9:16に切ると人物が横倒しになるため除外し、縦・正方形のみ使う
-            portrait = [f for f in files if is_portrait_photo(f)]
-            if not portrait:
-                print(f"  フォルダ{folder_id[:8]}は縦写真なし→次フォルダへ", file=sys.stderr)
-                continue
-            files = portrait
 
             # 14日クールダウン除外。全使用済みならフォルダ全体から選ぶ
             fresh = [f for f in files if f["id"] not in used]
@@ -542,7 +524,8 @@ def build_image(content: dict, today: datetime) -> bytes:
     # 背景：Drive写真 → 取得不可なら予備写真キャッシュ → どちらも無い時だけグラデ
     photo_bytes = get_drive_photo(content["courses"]) or load_fallback_photo()
     if photo_bytes:
-        bg = Image.open(BytesIO(photo_bytes)).convert("RGB")
+        # EXIF Orientationを適用して写真本来の向きに直す（縦写真が横倒しで出るのを防ぐ）
+        bg = ImageOps.exif_transpose(Image.open(BytesIO(photo_bytes))).convert("RGB")
         bw, bh = bg.size
         scale = max(W / bw, H / bh)
         nw, nh = int(bw * scale), int(bh * scale)
