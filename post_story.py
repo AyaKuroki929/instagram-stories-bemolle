@@ -965,35 +965,46 @@ def notify(msg: str) -> None:
 
 
 # ── 8. Threads → ストーリー化 ─────────────────────────────────
+THREADS_MORNING_START, THREADS_MORNING_END = 4, 11  # JST 朝の投稿とみなす時間帯（7時投稿を含む・昼12時は除外）
+
+
 def get_threads_latest_post() -> dict | None:
-    """ベモーレThreadsの最新（返信でない）テキスト投稿を返す。取得不可はNone。"""
+    """今日(JST)の『朝の投稿』だけを返す。
+    昼のツリー投稿などを誤選しないよう、朝の時間帯(4〜11時)に限定し、
+    返信/ツリー継続(is_reply)は除外、朝の最初の本投稿1件を使う。朝に投稿が無ければNone。"""
     if not THREADS_TOKEN:
-        print("THREADS_ACCESS_TOKEN_BEMOLLE 未設定", file=sys.stderr)
+        print("THREADS_API_TOKEN_BEMOLLE 未設定", file=sys.stderr)
         return None
     try:
         r = requests.get(f"{THREADS_API}/me/threads", params={
             "fields": "id,text,timestamp,permalink,topic_tag,is_reply",
-            "limit": 10,
+            "limit": 25,
             "access_token": THREADS_TOKEN,
         }, timeout=20)
         r.raise_for_status()
+        today = datetime.now(JST).date()
+        morning = []
         for item in r.json().get("data", []):
             if item.get("is_reply"):
-                continue  # 連投の2部目などはスキップ、朝一の本投稿を使う
+                continue  # ツリーの2部目以降は除外
             text = (item.get("text") or "").strip()
             if not text:
                 continue
-            ts = item.get("timestamp", "")
-            hours = ""
             try:
-                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                secs = (datetime.now(timezone.utc) - dt).total_seconds()
-                hours = f"{int(secs // 3600)}時間" if secs >= 3600 else f"{int(secs // 60)}分"
+                dt = datetime.fromisoformat(
+                    item.get("timestamp", "").replace("Z", "+00:00")).astimezone(JST)
             except Exception:
-                pass
-            return {"text": text, "topic": item.get("topic_tag") or "",
-                    "hours": hours, "permalink": item.get("permalink", "")}
-        return None
+                continue
+            if dt.date() == today and THREADS_MORNING_START <= dt.hour < THREADS_MORNING_END:
+                morning.append((dt, item, text))
+        if not morning:
+            print("今日の朝(4〜11時)の投稿が見つかりません", file=sys.stderr)
+            return None  # 朝に投稿が無ければ選ばない（昼のツリー等を拾わない）
+        dt, item, text = min(morning, key=lambda x: x[0])  # 朝の最初の1件
+        secs = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
+        hours = f"{int(secs // 3600)}時間" if secs >= 3600 else f"{int(secs // 60)}分"
+        return {"text": text, "topic": item.get("topic_tag") or "",
+                "hours": hours, "permalink": item.get("permalink", "")}
     except Exception as e:
         print(f"Threads投稿取得失敗: {e}", file=sys.stderr)
         return None
@@ -1122,8 +1133,9 @@ def run_threads_story() -> None:
 
     post = get_threads_latest_post()
     if not post:
-        notify("⚠️ @bemolle_diet Threadsストーリー失敗\n最新Threads投稿が取得できませんでした")
-        sys.exit(1)
+        notify("ℹ️ @bemolle_diet Threadsストーリー：今朝の投稿が見つからずスキップしました")
+        print("朝の投稿なし→スキップ")
+        return
     print(f"対象Threads投稿（{post.get('hours')}）: {post['text'][:40]}…")
 
     avatar = get_threads_avatar()
