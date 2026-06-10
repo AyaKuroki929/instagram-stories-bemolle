@@ -965,13 +965,14 @@ def notify(msg: str) -> None:
 
 
 # ── 8. Threads → ストーリー化 ─────────────────────────────────
-THREADS_MORNING_START, THREADS_MORNING_END = 4, 11  # JST 朝の投稿とみなす時間帯（7時投稿を含む・昼12時は除外）
+THREADS_MORNING = (4, 11)   # JST 朝（7時投稿）。最優先
+THREADS_NIGHT   = (19, 24)  # JST 夜（21時投稿）。朝が無い時のフォールバック
+# 昼（11〜19時）のツリー投稿は絶対に選ばない
 
 
 def get_threads_latest_post() -> dict | None:
-    """今日(JST)の『朝の投稿』だけを返す。
-    昼のツリー投稿などを誤選しないよう、朝の時間帯(4〜11時)に限定し、
-    返信/ツリー継続(is_reply)は除外、朝の最初の本投稿1件を使う。朝に投稿が無ければNone。"""
+    """今日(JST)の『朝(4〜11時)の投稿』を最優先で返す。無ければ『夜(19〜24時)の投稿』。
+    昼(11〜19時)のツリー投稿は絶対に選ばない。返信/ツリー継続(is_reply)は除外。"""
     if not THREADS_TOKEN:
         print("THREADS_API_TOKEN_BEMOLLE 未設定", file=sys.stderr)
         return None
@@ -983,7 +984,7 @@ def get_threads_latest_post() -> dict | None:
         }, timeout=20)
         r.raise_for_status()
         today = datetime.now(JST).date()
-        morning = []
+        morning, night = [], []
         for item in r.json().get("data", []):
             if item.get("is_reply"):
                 continue  # ツリーの2部目以降は除外
@@ -995,12 +996,19 @@ def get_threads_latest_post() -> dict | None:
                     item.get("timestamp", "").replace("Z", "+00:00")).astimezone(JST)
             except Exception:
                 continue
-            if dt.date() == today and THREADS_MORNING_START <= dt.hour < THREADS_MORNING_END:
+            if dt.date() != today:
+                continue
+            if THREADS_MORNING[0] <= dt.hour < THREADS_MORNING[1]:
                 morning.append((dt, item, text))
-        if not morning:
-            print("今日の朝(4〜11時)の投稿が見つかりません", file=sys.stderr)
-            return None  # 朝に投稿が無ければ選ばない（昼のツリー等を拾わない）
-        dt, item, text = min(morning, key=lambda x: x[0])  # 朝の最初の1件
+            elif THREADS_NIGHT[0] <= dt.hour < THREADS_NIGHT[1]:
+                night.append((dt, item, text))
+            # 昼(11〜19時)はどちらにも入れない＝絶対に選ばない
+
+        bucket = morning or night  # 朝を最優先、無ければ夜
+        if not bucket:
+            print("今日の朝・夜の投稿が見つかりません（昼は選ばない）", file=sys.stderr)
+            return None
+        dt, item, text = min(bucket, key=lambda x: x[0])  # その時間帯の最初の1件
         secs = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
         hours = f"{int(secs // 3600)}時間" if secs >= 3600 else f"{int(secs // 60)}分"
         return {"text": text, "topic": item.get("topic_tag") or "",
