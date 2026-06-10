@@ -53,6 +53,7 @@ GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 USED_PHOTOS_FILE     = "used_photos.json"
+LAST_POST_FILE       = "last_post.json"   # 最終投稿日マーカー（Meta API非依存の二重投稿防止・第2の砦）
 FALLBACK_DIR         = "fallback_photos"  # Drive障害時に使う実写真キャッシュ（複数枚・グラデ背景を出さないため）
 FALLBACK_MAX         = 5                   # 予備写真の最大保持数（達したら打ち止め＝git肥大化防止）
 COOLDOWN_DAYS        = 14  # 同じ写真を使わない日数
@@ -895,6 +896,32 @@ def manage_meta_token() -> None:
 
 
 # ── 6.5. 二重投稿防止（idempotency）─────────────────────────────
+def posted_today_local() -> bool:
+    """リポジトリの最終投稿日マーカーで今日(JST)投稿済みか判定。
+    Meta /stories APIが既存投稿を返さない不具合（実際に二重投稿が発生）への第2の砦。"""
+    try:
+        if os.path.exists(LAST_POST_FILE):
+            with open(LAST_POST_FILE, encoding="utf-8") as f:
+                d = json.load(f)
+            return d.get("date") == datetime.now(JST).date().isoformat()
+    except Exception as e:
+        print(f"last_post.json読込失敗（無視）: {e}", file=sys.stderr)
+    return False
+
+
+def mark_posted_local() -> None:
+    """投稿成功時に最終投稿日マーカーを更新（workflowがcommit/pushして永続化）。"""
+    try:
+        with open(LAST_POST_FILE, "w", encoding="utf-8") as f:
+            json.dump(
+                {"date": datetime.now(JST).date().isoformat(),
+                 "ts": datetime.now(JST).isoformat()},
+                f, ensure_ascii=False, indent=2,
+            )
+    except Exception as e:
+        print(f"last_post.json保存失敗: {e}", file=sys.stderr)
+
+
 def already_posted_today(ig_user_id: str) -> bool:
     """今日(JST)すでにストーリー投稿があれば True。API失敗時は False（fail-open）。"""
     try:
@@ -949,8 +976,11 @@ def main() -> None:
     # トークン期限管理（自動延長 → 失敗時はLINE警告）
     manage_meta_token()
 
-    # 同日二重投稿防止：今日すでに投稿があればクリーン終了
-    if already_posted_today(ig_id):
+    # 同日二重投稿防止：自動実行(schedule/repository_dispatch)のみ判定。
+    # 手動 workflow_dispatch は意図的な再投稿なので常に通す。
+    # ローカルマーカー（Meta非依存）とMeta /stories の両方で判定し、どちらかが今日ならスキップ。
+    is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    if not is_manual and (posted_today_local() or already_posted_today(ig_id)):
         print("本日のストーリーは投稿済みのためスキップ。")
         return
 
@@ -974,6 +1004,7 @@ def main() -> None:
         # アップロードはpost_to_stories内で試行ごとに行う（失敗時に新URLで再投稿するため）
         media_id = post_to_stories(ig_id, image_bytes)
         print(f"投稿完了: media_id={media_id}")
+        mark_posted_local()  # 最終投稿日マーカー更新（二重投稿防止の永続化）
     except Exception as e:
         print(f"Meta APIエラー: {e}", file=sys.stderr)
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nMeta APIエラー: {e}")
