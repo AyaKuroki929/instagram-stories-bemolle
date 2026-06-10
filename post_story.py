@@ -54,6 +54,9 @@ GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
 GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 USED_PHOTOS_FILE     = "used_photos.json"
 LAST_POST_FILE       = "last_post.json"   # 最終投稿日マーカー（Meta API非依存の二重投稿防止・第2の砦）
+LAST_POST_THREADS_FILE = "last_post_threads.json"  # Threads→ストーリー用の最終投稿日マーカー（サロン投稿と独立）
+THREADS_TOKEN        = os.environ.get("THREADS_ACCESS_TOKEN_BEMOLLE", "")  # ベモーレThreads（threadsモードのみ必須）
+THREADS_API          = "https://graph.threads.net/v1.0"
 FALLBACK_DIR         = "fallback_photos"  # Drive障害時に使う実写真キャッシュ（複数枚・グラデ背景を出さないため）
 FALLBACK_MAX         = 5                   # 予備写真の最大保持数（達したら打ち止め＝git肥大化防止）
 COOLDOWN_DAYS        = 14  # 同じ写真を使わない日数
@@ -896,23 +899,23 @@ def manage_meta_token() -> None:
 
 
 # ── 6.5. 二重投稿防止（idempotency）─────────────────────────────
-def posted_today_local() -> bool:
+def posted_today_local(path: str = LAST_POST_FILE) -> bool:
     """リポジトリの最終投稿日マーカーで今日(JST)投稿済みか判定。
     Meta /stories APIが既存投稿を返さない不具合（実際に二重投稿が発生）への第2の砦。"""
     try:
-        if os.path.exists(LAST_POST_FILE):
-            with open(LAST_POST_FILE, encoding="utf-8") as f:
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
                 d = json.load(f)
             return d.get("date") == datetime.now(JST).date().isoformat()
     except Exception as e:
-        print(f"last_post.json読込失敗（無視）: {e}", file=sys.stderr)
+        print(f"{path}読込失敗（無視）: {e}", file=sys.stderr)
     return False
 
 
-def mark_posted_local() -> None:
+def mark_posted_local(path: str = LAST_POST_FILE) -> None:
     """投稿成功時に最終投稿日マーカーを更新（workflowがcommit/pushして永続化）。"""
     try:
-        with open(LAST_POST_FILE, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(
                 {"date": datetime.now(JST).date().isoformat(),
                  "ts": datetime.now(JST).isoformat()},
@@ -961,8 +964,199 @@ def notify(msg: str) -> None:
         pass
 
 
+# ── 8. Threads → ストーリー化 ─────────────────────────────────
+def get_threads_latest_post() -> dict | None:
+    """ベモーレThreadsの最新（返信でない）テキスト投稿を返す。取得不可はNone。"""
+    if not THREADS_TOKEN:
+        print("THREADS_ACCESS_TOKEN_BEMOLLE 未設定", file=sys.stderr)
+        return None
+    try:
+        r = requests.get(f"{THREADS_API}/me/threads", params={
+            "fields": "id,text,timestamp,permalink,topic_tag,is_reply",
+            "limit": 10,
+            "access_token": THREADS_TOKEN,
+        }, timeout=20)
+        r.raise_for_status()
+        for item in r.json().get("data", []):
+            if item.get("is_reply"):
+                continue  # 連投の2部目などはスキップ、朝一の本投稿を使う
+            text = (item.get("text") or "").strip()
+            if not text:
+                continue
+            ts = item.get("timestamp", "")
+            hours = ""
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                secs = (datetime.now(timezone.utc) - dt).total_seconds()
+                hours = f"{int(secs // 3600)}時間" if secs >= 3600 else f"{int(secs // 60)}分"
+            except Exception:
+                pass
+            return {"text": text, "topic": item.get("topic_tag") or "",
+                    "hours": hours, "permalink": item.get("permalink", "")}
+        return None
+    except Exception as e:
+        print(f"Threads投稿取得失敗: {e}", file=sys.stderr)
+        return None
+
+
+def get_threads_avatar() -> bytes | None:
+    """ベモーレThreadsのプロフィール画像を取得（失敗時はNone→プレースホルダ）。"""
+    if not THREADS_TOKEN:
+        return None
+    try:
+        r = requests.get(f"{THREADS_API}/me", params={
+            "fields": "threads_profile_picture_url",
+            "access_token": THREADS_TOKEN,
+        }, timeout=15)
+        r.raise_for_status()
+        url = r.json().get("threads_profile_picture_url")
+        if not url:
+            return None
+        ir = requests.get(url, timeout=15)
+        ir.raise_for_status()
+        return ir.content
+    except Exception as e:
+        print(f"Threadsアイコン取得失敗（プレースホルダ使用）: {e}", file=sys.stderr)
+        return None
+
+
+def build_threads_image(post: dict, avatar_bytes: bytes | None) -> bytes:
+    """Threads投稿をThreads風の1080×1920ストーリー画像にする（本文量でフォント自動調整）。"""
+    W, H = 1080, 1920
+    PAD = 80
+    ink, gray, link = (20, 20, 22), (120, 120, 128), (40, 90, 200)
+    img = Image.new("RGB", (W, H), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+
+    # ヘッダー（アイコン＋名前＋トピック＋経過時間）
+    ay, av_d = 168, 96
+    if avatar_bytes:
+        try:
+            av = ImageOps.exif_transpose(Image.open(BytesIO(avatar_bytes))).convert("RGB")
+            av = ImageOps.fit(av, (av_d, av_d), Image.LANCZOS)
+            mask = Image.new("L", (av_d, av_d), 0)
+            ImageDraw.Draw(mask).ellipse([0, 0, av_d, av_d], fill=255)
+            img.paste(av, (PAD, ay), mask)
+        except Exception:
+            d.ellipse([PAD, ay, PAD + av_d, ay + av_d], fill=(210, 196, 186))
+    else:
+        d.ellipse([PAD, ay, PAD + av_d, ay + av_d], fill=(210, 196, 186))
+    tx = PAD + av_d + 28
+    d.text((tx, ay + 6), "bemolle_diet", font=get_font(46), fill=ink)
+    sub = post.get("topic") or ""
+    if post.get("hours"):
+        sub = f"{sub} ・ {post['hours']}" if sub else post["hours"]
+    d.text((tx, ay + 62), sub, font=get_font(32), fill=gray)
+
+    maxw, top, foot_y = W - PAD * 2, 330, H - 150
+    avail = foot_y - top - 30
+
+    def wrap(text, font):
+        FORBID = "。、」』）)！？!?…"
+        out = []
+        for raw in text.split("\n"):
+            line = ""
+            for ch in raw:
+                if font.getbbox(line + ch)[2] <= maxw:
+                    line += ch
+                elif ch in FORBID and line:
+                    out.append(line + ch); line = ""
+                else:
+                    out.append(line); line = ch
+            out.append(line)
+        return out
+
+    def layout(font, lh, pgap):
+        items, h = [], 0
+        for seg in post["text"].split("\n"):
+            if seg.strip() == "":
+                items.append(("gap", "", False)); h += pgap
+            else:
+                is_link = any(k in seg for k in ("instagram.com", "http", "threads.net"))
+                for ln in wrap(seg, font):
+                    items.append(("line", ln, is_link)); h += lh
+        return items, h
+
+    chosen = None
+    for size in (40, 37, 34, 31, 28):
+        font = get_font(size); lh = int(size * 1.45); pgap = int(size * 0.55)
+        items, h = layout(font, lh, pgap)
+        if h <= avail:
+            chosen = (font, lh, items); break
+    if chosen is None:  # 最小でも収まらない→入る分だけ描いて末尾省略
+        font = get_font(28); lh = int(28 * 1.45)
+        items, _ = layout(font, lh, int(28 * 0.55))
+        keep = max(1, avail // lh - 1)
+        items = items[:keep] + [("line", "…続きはThreadsで", False)]
+        chosen = (font, lh, items)
+
+    font, lh, items = chosen
+    y = top
+    for kind, text, is_link in items:
+        if kind == "gap":
+            y += int(lh * 0.4)
+        else:
+            d.text((PAD, y), text, font=font, fill=(link if is_link else ink)); y += lh
+
+    d.line([(PAD, foot_y), (W - PAD, foot_y)], fill=(230, 230, 232), width=2)
+    d.text((W // 2, H - 100), "Threadsの投稿より　@bemolle_diet",
+           font=get_font(30), fill=gray, anchor="mm")
+
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
+
+
+def run_threads_story() -> None:
+    today = datetime.now(JST)
+    print(f"[{today.strftime('%Y-%m-%d %H:%M')} JST] Threads→ストーリー投稿開始")
+    ig_id = get_ig_user_id()
+    manage_meta_token()
+
+    # サロン投稿(7:00)と同日に複数ストーリーが正常なので、Meta /stories判定は使わず
+    # Threads専用のローカルマーカーのみで二重投稿防止。手動dispatchは常に投稿。
+    is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    if not is_manual and posted_today_local(LAST_POST_THREADS_FILE):
+        print("本日のThreadsストーリーは投稿済みのためスキップ。")
+        return
+
+    post = get_threads_latest_post()
+    if not post:
+        notify("⚠️ @bemolle_diet Threadsストーリー失敗\n最新Threads投稿が取得できませんでした")
+        sys.exit(1)
+    print(f"対象Threads投稿（{post.get('hours')}）: {post['text'][:40]}…")
+
+    avatar = get_threads_avatar()
+    try:
+        image_bytes = build_threads_image(post, avatar)
+    except Exception as e:
+        notify(f"⚠️ @bemolle_diet Threadsストーリー失敗\n画像エラー: {e}")
+        sys.exit(1)
+
+    # ドライラン：投稿せずimgbbにだけ上げてプレビューURLを表示（初回確認用）
+    if os.environ.get("STORY_DRYRUN") == "1":
+        url = upload_to_imgbb(image_bytes)
+        print(f"DRYRUN プレビュー（未投稿）: {url}")
+        return
+
+    try:
+        media_id = post_to_stories(ig_id, image_bytes)
+        print(f"投稿完了: media_id={media_id}")
+        mark_posted_local(LAST_POST_THREADS_FILE)
+    except Exception as e:
+        print(f"Meta APIエラー: {e}", file=sys.stderr)
+        notify(f"⚠️ @bemolle_diet Threadsストーリー失敗\nMeta APIエラー: {e}")
+        sys.exit(1)
+    print("完了")
+
+
 # ── メイン ────────────────────────────────────────────────────
 def main() -> None:
+    # STORY_MODE=threads ならThreads→ストーリー化を実行（別ワークフロー・8時）
+    if os.environ.get("STORY_MODE") == "threads":
+        run_threads_story()
+        return
+
     today = datetime.now(JST)
     print(f"[{today.strftime('%Y-%m-%d %H:%M')} JST] ストーリー投稿開始")
 
