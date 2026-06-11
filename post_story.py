@@ -56,6 +56,7 @@ GDRIVE_SECRET  = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 USED_PHOTOS_FILE     = "used_photos.json"
 LAST_POST_FILE       = "last_post.json"   # 最終投稿日マーカー（Meta API非依存の二重投稿防止・第2の砦）
 LAST_POST_THREADS_FILE = "last_post_threads.json"  # Threads→ストーリー用の最終投稿日マーカー（サロン投稿と独立）
+RECENT_TEXTS_FILE    = "recent_texts.json"  # 最近の挨拶・締め文の履歴（書き出しの連日重複を防ぐ）
 THREADS_TOKEN        = os.environ.get("THREADS_API_TOKEN_BEMOLLE", "")  # ベモーレThreads（threadsモードのみ必須・threads-botと同名）
 THREADS_API          = "https://graph.threads.net/v1.0"
 FALLBACK_DIR         = "fallback_photos"  # Drive障害時に使う実写真キャッシュ（複数枚・グラデ背景を出さないため）
@@ -198,6 +199,33 @@ def save_used_photo(file_id: str, photo_hash: str = "", series: str = "") -> Non
             json.dump(used, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"used_photos.json 保存失敗: {e}", file=sys.stderr)
+
+
+def load_recent_greetings(n: int = 10) -> list[str]:
+    """直近に使った挨拶を返す（書き出しの連日重複を避けるためプロンプトに渡す）。"""
+    try:
+        if os.path.exists(RECENT_TEXTS_FILE):
+            with open(RECENT_TEXTS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            return [e.get("greeting", "") for e in data[-n:] if e.get("greeting")]
+    except Exception:
+        pass
+    return []
+
+
+def save_recent_text(greeting: str, closing: str = "") -> None:
+    """使った挨拶・締め文を履歴に追記（直近30件保持・workflowがcommitして永続化）。"""
+    try:
+        data = []
+        if os.path.exists(RECENT_TEXTS_FILE):
+            with open(RECENT_TEXTS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+        data.append({"date": datetime.now(JST).date().isoformat(),
+                     "greeting": greeting, "closing": closing})
+        with open(RECENT_TEXTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data[-30:], f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"recent_texts.json保存失敗: {e}", file=sys.stderr)
 
 
 def save_fallback_photo(img_bytes: bytes) -> None:
@@ -540,17 +568,35 @@ def generate_content(today: datetime) -> dict:
 
     # 大阪の実際の天気を取得
     weather = get_weather(hour=7)
-    weather_line = f"\n今日の大阪の天気：{weather}（7時時点）" if weather else ""
+    is_rain = bool(weather) and any(k in weather for k in ("雨", "雪", "雷", "霧"))
+    # 毎日「今朝は気持ちのいい天気ですね」を繰り返さないため、雨など以外は約1/3だけ天気に触れる。
+    # 季節も同様に約1/3だけ。どちらにも触れない日は感謝・気遣い等の別の切り口にする。
+    mention_weather = bool(weather) and (is_rain or random.random() < 0.35)
+    mention_season  = random.random() < 0.35
 
-    # 毎朝必ず季節の言葉が入ると定型的でAIっぽいので、約1/3の日だけ季節に触れる
-    mention_season = random.random() < 0.35
     season_label = f"・{season}" if mention_season else ""
+    weather_line = f"\n今日の大阪の天気：{weather}（7時時点）" if mention_weather else ""
+
+    touch = []
+    if mention_weather:
+        touch.append("天気（雨なら必ず・それ以外は任意で一言）")
     if mention_season:
-        hook_rule = "② ご来店を心待ちにしていることが伝わる一言（実際の天気が参考になれば自然に触れる。雨なら必ず触れる。晴れや平凡な天気なら季節・気遣いでも可。毎回変える）"
-        closing_hint = "心待ちにしている一言（季節・気遣いなど、1文）"
+        touch.append(f"{season}の季節感を一言")
+    if touch:
+        hook_rule = "② ご来店を心待ちにしている一言。" + "／".join(touch) + "に自然に触れてよい（毎回表現を変える）"
+        closing_hint = "心待ちにしている一言（1文・毎回違う切り口）"
     else:
-        hook_rule = "② ご来店を心待ちにしていることが伝わる一言（実際の天気が参考になれば自然に触れる。雨なら天気には触れてよい。ただし季節の言葉（春・初夏・夏・秋・冬など）は使わず、感謝・気遣い・サロンの雰囲気など別の切り口で。毎回変える）"
-        closing_hint = "心待ちにしている一言（季節の言葉は使わない、1文）"
+        hook_rule = "② ご来店を心待ちにしている一言。天気や季節の話には触れず、感謝・気遣い・サロンの雰囲気など別の切り口で（毎回変える）"
+        closing_hint = "心待ちにしている一言（天気・季節に触れない、1文）"
+
+    recent_greetings = load_recent_greetings(10)
+    avoid_block = ""
+    if recent_greetings:
+        lst = "\n".join(f"・{g}" for g in recent_greetings)
+        avoid_block = (
+            f"\n\n【最近使った挨拶＝絶対に繰り返さない】\n{lst}\n"
+            "上記と同じ・似た書き出しは禁止。特に『今朝は〜天気ですね』の形を連日続けない。毎回違う入り方にする。"
+        )
 
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
 以下のルールに従い、今日のInstagramストーリー1枚目の文章をJSONで出力してください。
@@ -558,8 +604,8 @@ def generate_content(today: datetime) -> dict:
 今日：{month}月{day}日（{weekday}曜日）{season_label}{weather_line}
 
 【1枚目の構成ルール】
-① 朝の挨拶（1〜2文。「ベモーレです」は不要。自然な挨拶のみ）
-{hook_rule}
+① 朝の挨拶（1〜2文。「ベモーレです」は不要。書き出しは毎回変える。「今朝は〜天気ですね」のような天気の定型で始めない）
+{hook_rule}{avoid_block}
 
 【文章ルール（最重要）】
 ・「ベモーレ」はカタカナ表記のみ（Bemolleは使わない）
@@ -587,6 +633,7 @@ def generate_content(today: datetime) -> dict:
     result = extract_json(message.content[0].text)
     result["status"] = status   # Pythonで決定した文言をそのまま使う（Claude変更禁止）
     result["courses"] = course_pool
+    save_recent_text(result.get("greeting", ""), result.get("closing", ""))  # 書き出しの連日重複を防ぐ履歴
     return result
 
 
