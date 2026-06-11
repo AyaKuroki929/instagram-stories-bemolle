@@ -2,7 +2,9 @@ name: Threads to Story - @bemolle_diet
 
 on:
   schedule:
-    - cron: "0 23 * * *"  # 8:00 JST バックアップ（idempotency判定で重複投稿は防止）
+    - cron: "0 23 * * *"   # 8:00 JST（GitHubスケジュールは遅延しやすいため下に保険）
+    - cron: "30 23 * * *"  # 8:30 JST バックアップ
+    - cron: "0 0 * * *"    # 9:00 JST バックアップ（朝の投稿は時間帯で選ぶので中身は不変・二重投稿は防止）
   workflow_dispatch:
     inputs:
       dryrun:
