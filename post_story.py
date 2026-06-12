@@ -1071,6 +1071,12 @@ def get_threads_latest_post() -> dict | None:
         }, timeout=20)
         r.raise_for_status()
         items = r.json().get("data", [])
+        if os.environ.get("STORY_DRYRUN") == "1":
+            for it in items[:12]:
+                rp = it.get("root_post") or {}
+                print(f"  DBG id={it.get('id')} reply={it.get('is_reply')} "
+                      f"root={rp.get('id')} ts={it.get('timestamp')} :: {(it.get('text') or '')[:18]}",
+                      file=sys.stderr)
         today = datetime.now(JST).date()
         morning, night = [], []
         for item in items:
