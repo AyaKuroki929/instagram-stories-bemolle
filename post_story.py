@@ -832,7 +832,7 @@ def upload_to_blob(image_bytes: bytes) -> str:
     """Vercel Blob にアップロードして公開URLを返す（imgbb↔Meta取得不調の保険）。"""
     pathname = f"story-{int(time.time())}-{random.randint(1000, 9999)}.jpg"
     r = requests.put(
-        "https://vercel.com/api/blob",
+        "https://vercel.com/api/blob/",
         params={"pathname": pathname},
         headers={
             "authorization": f"Bearer {BLOB_TOKEN}",
@@ -844,7 +844,8 @@ def upload_to_blob(image_bytes: bytes) -> str:
         data=image_bytes,
         timeout=30,
     )
-    r.raise_for_status()
+    if not r.ok:
+        raise Exception(f"Blob {r.status_code}: {r.text[:250]}")
     return r.json()["url"]
 
 
