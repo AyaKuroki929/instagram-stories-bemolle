@@ -1,8 +1,4 @@
 {
-  "1fRMlDf8Lg57aFlgHrF4ascAu1u64S7sP": {
-    "ts": "2026-06-01T07:00:50.002866+09:00",
-    "hash": "f7e7f7e3e3e1e000"
-  },
   "1_ZnmQhP6Ke1qLFM4KcED8om4JnZQE4eu": {
     "ts": "2026-06-02T07:00:50.730338+09:00",
     "hash": "293b3f0f0f0f3e3c"
@@ -81,5 +77,10 @@
     "ts": "2026-06-14T09:26:58.742265+09:00",
     "hash": "ffdf4f0991c1e1e3",
     "series": "line_album_幹細胞研究所視察_260331_"
+  },
+  "1JIpKgEXu5B10oyaEW-OYkXgCAezY_ZM7": {
+    "ts": "2026-06-15T07:37:11.326175+09:00",
+    "hash": "fbf1e17d1d1e11b0",
+    "series": "mur_"
   }
 }
