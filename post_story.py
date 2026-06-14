@@ -49,6 +49,7 @@ def extract_json(text: str) -> dict:
 META_TOKEN    = os.environ["META_ACCESS_TOKEN"]
 ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
 IMGBB_KEY      = os.environ["IMGBB_API_KEY"]
+BLOB_TOKEN     = os.environ.get("BLOB_READ_WRITE_TOKEN", "")  # Vercel Blob（主ホスト・未設定ならimgbbのみ）
 LINE_TOKEN     = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
 GDRIVE_REFRESH = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GDRIVE_CLIENT  = os.environ.get("GOOGLE_CLIENT_ID", "")
@@ -827,20 +828,45 @@ def upload_to_imgbb(image_bytes: bytes) -> str:
     return r.json()["data"]["url"]
 
 
+def upload_to_blob(image_bytes: bytes) -> str:
+    """Vercel Blob にアップロードして公開URLを返す（imgbb↔Meta取得不調の保険）。"""
+    pathname = f"story-{int(time.time())}-{random.randint(1000, 9999)}.jpg"
+    r = requests.put(
+        "https://vercel.com/api/blob",
+        params={"pathname": pathname},
+        headers={
+            "authorization": f"Bearer {BLOB_TOKEN}",
+            "x-api-version": "12",
+            "x-content-type": "image/jpeg",
+            "x-add-random-suffix": "1",
+            "x-vercel-blob-access": "public",
+        },
+        data=image_bytes,
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["url"]
+
+
+def upload_image(image_bytes: bytes, host: str) -> str:
+    return upload_to_blob(image_bytes) if host == "blob" else upload_to_imgbb(image_bytes)
+
+
 # ── 6. Instagram Stories に投稿 ───────────────────────────────
 def post_to_stories(ig_user_id: str, image_bytes: bytes) -> str:
     # 投稿が「止まらない」ための多重防御。Metaのメディア取得が一時的に失敗
-    # （code 9004 / subcode 2207052 "media URI doesn't meet requirements"）することがある。
-    # 画像が正常でも稀に起きるため、失敗のたびに画像をアップロードし直して
-    # 「新しいURL」でコンテナを作り直す（今日の手動再実行も新URLで一発成功した）。最大3回。
+    # （code 9004 / subcode 2207052）し、imgbb↔Metaの取得不調がしばらく続くと
+    # 同一ホストの再アップだけでは復旧しない（2回実害）。
+    # そこで試行ごとに画像ホストを切替（Blob優先・imgbb保険）＋新URLで作り直す。最大3回。
+    hosts = ["blob", "imgbb", "blob"] if BLOB_TOKEN else ["imgbb", "imgbb", "imgbb"]
     creation_id = None
     last_err = ""
-    for attempt in range(3):
+    for attempt, host in enumerate(hosts):
         try:
-            image_url = upload_to_imgbb(image_bytes)
-            print(f"画像URL（試行{attempt + 1}/3）: {image_url}")
+            image_url = upload_image(image_bytes, host)
+            print(f"画像URL（試行{attempt + 1}/3・{host}）: {image_url}")
         except Exception as e:
-            last_err = f"画像アップロード失敗: {e}"
+            last_err = f"{host}アップロード失敗: {e}"
             print(f"  {last_err}（試行{attempt + 1}/3）", file=sys.stderr)
             if attempt < 2:
                 time.sleep(8)
