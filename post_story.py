@@ -403,16 +403,10 @@ def get_season(today: datetime) -> str:
 # ── 3a. 日曜定休日コンテンツ生成 ────────────────────────────────
 def generate_sunday_content(today: datetime) -> dict:
     month  = today.month
-    season = get_season(today)
 
-    # 毎週必ず季節の言葉が入ると定型的でAIっぽいので、約1/3の週だけ季節に触れる
-    mention_season = random.random() < 0.35
-    season_label = f"（{season}）" if mention_season else ""
-    season_rule = (
-        f"・{season}らしい言葉や空気感を自然に一言だけ入れてもいい"
-        if mention_season else
-        "・季節や天気の言葉（春・初夏・夏・秋・冬など）は入れない。毎週同じ季節フレーズで始まるのを避け、感謝や気遣いで自然に書く"
-    )
+    # 日曜（定休日）は季節に触れない（毎回同じ季節フレーズになりがちで定型的なため）
+    season_label = ""
+    season_rule = "・季節や天気の言葉（春・初夏・夏・秋・冬など）は入れない。感謝や気遣いで自然に書く"
 
     # 内容タイプをランダム選択
     result_type = random.choices(
