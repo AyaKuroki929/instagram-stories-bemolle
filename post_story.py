@@ -408,18 +408,24 @@ def generate_sunday_content(today: datetime) -> dict:
     season_label = ""
     season_rule = "・季節や天気の言葉（春・初夏・夏・秋・冬など）は入れない。感謝や気遣いで自然に書く"
 
-    # 内容タイプをランダム選択
-    result_type = random.choices(
-        ["general", "skin", "body", "both"],
-        weights=[40, 25, 25, 10],
-    )[0]
-
-    result_hint = {
+    # 内容タイプ（②の感謝・振り返りの切り口）をランダム選択。毎週違う切り口になるよう種類を増やしている
+    hints = {
         "general":  "先週のご予約・ご来店への感謝",
         "skin":     "先週お肌の変化を実感してくださった方への感謝",
         "body":     "先週体の変化・ダイエット効果を実感してくださった方への感謝",
         "both":     "先週お肌と体の両方で嬉しい変化があったことへの感謝",
-    }[result_type]
+        "blessed":  "素敵なお客様に恵まれていることへの感謝（先週も幸せな一週間だった、という温度感）",
+        "talk":     "お客様との会話や笑顔が日々の励みになっていること",
+        "longtime": "長く通い続けてくださる方への感謝",
+        "newguest": "先週は新しいお客様との出会いが多かったことへの感謝",
+        "effort":   "結果を出そうと頑張るお客様の姿に、こちらが励まされていること（寄り添い）",
+        "recharge": "今日はスタッフ一同ゆっくり充電して、また月曜に良い状態でお迎えしたいこと",
+    }
+    result_type = random.choices(
+        list(hints),
+        weights=[12, 12, 12, 8, 12, 10, 10, 10, 10, 8],
+    )[0]
+    result_hint = hints[result_type]
 
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
 今日は日曜日・定休日です。以下のルールで投稿文をJSONで出力してください。
@@ -562,27 +568,23 @@ def generate_content(today: datetime) -> dict:
         courses_str = "\n".join(f"・{c}" for c in course_pool)
         print("STORY_FORCE_FACIAL_TRIAL=1 → ご新規＋肌質改善体験で固定")
 
-    # 大阪の実際の天気を取得
+    # 平日は季節に触れない。天気も基本触れず、大雨など足元が悪い日だけ気遣いを入れる。
     weather = get_weather(hour=7)
-    is_rain = bool(weather) and any(k in weather for k in ("雨", "雪", "雷", "霧"))
-    # 毎日「今朝は気持ちのいい天気ですね」を繰り返さないため、雨など以外は約1/3だけ天気に触れる。
-    # 季節も同様に約1/3だけ。どちらにも触れない日は感謝・気遣い等の別の切り口にする。
-    mention_weather = bool(weather) and (is_rain or random.random() < 0.35)
-    mention_season  = random.random() < 0.35
+    # 足元が悪い天気（雨・雪・雷・霰。ただし小雨・小雪は除く）
+    is_bad_footing = bool(weather) and any(k in weather for k in ("雨", "雪", "雷", "霰")) \
+        and "小雨" not in weather and "小雪" not in weather
 
-    season_label = f"・{season}" if mention_season else ""
-    weather_line = f"\n今日の大阪の天気：{weather}（7時時点）" if mention_weather else ""
+    season_label = ""  # 季節は出さない
+    weather_line = f"\n今日の大阪の天気：{weather}（7時時点・足元が悪い）" if is_bad_footing else ""
 
-    touch = []
-    if mention_weather:
-        touch.append("天気（雨なら必ず・それ以外は任意で一言）")
-    if mention_season:
-        touch.append(f"{season}の季節感を一言")
-    if touch:
-        hook_rule = "② ご来店を心待ちにしている一言。" + "／".join(touch) + "に自然に触れてよい（毎回表現を変える）"
-        closing_hint = "心待ちにしている一言（1文・毎回違う切り口）"
+    if is_bad_footing:
+        hook_rule = ("② ご来店を心待ちにしている一言。今日は足元が悪いので"
+                     "「足元の悪い中ですが、お気をつけてお越しください」のような気遣いを自然に一言"
+                     "（季節の言葉は使わない・毎回表現を変える）")
+        closing_hint = "心待ちにしている一言（足元への気遣いを含む、1文）"
     else:
-        hook_rule = "② ご来店を心待ちにしている一言。天気や季節の話には触れず、感謝・気遣い・サロンの雰囲気など別の切り口で（毎回変える）"
+        hook_rule = ("② ご来店を心待ちにしている一言。天気や季節の話には触れず、"
+                     "感謝・気遣い・サロンの雰囲気など別の切り口で（毎回変える）")
         closing_hint = "心待ちにしている一言（天気・季節に触れない、1文）"
 
     recent_greetings = load_recent_greetings(10)
