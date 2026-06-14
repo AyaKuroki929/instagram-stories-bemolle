@@ -1300,10 +1300,12 @@ def run_threads_story() -> None:
         notify(f"⚠️ @bemolle_diet Threadsストーリー失敗\n画像エラー: {e}")
         sys.exit(1)
 
-    # ドライラン：投稿せずimgbbにだけ上げてプレビューURLを表示（初回確認用）
+    # ドライラン：投稿せず画像をアップしてプレビューURLを表示（初回確認用）。
+    # Blobトークンがあれば Blob 経由で上げて、Blobが機能しているかも同時に検証する。
     if os.environ.get("STORY_DRYRUN") == "1":
-        url = upload_to_imgbb(image_bytes)
-        print(f"DRYRUN プレビュー（未投稿）: {url}")
+        host = "blob" if BLOB_TOKEN else "imgbb"
+        url = upload_image(image_bytes, host)
+        print(f"DRYRUN プレビュー（未投稿・{host}）: {url}")
         return
 
     try:
