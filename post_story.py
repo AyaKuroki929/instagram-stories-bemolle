@@ -202,13 +202,14 @@ def save_used_photo(file_id: str, photo_hash: str = "", series: str = "") -> Non
         print(f"used_photos.json 保存失敗: {e}", file=sys.stderr)
 
 
-def load_recent_greetings(n: int = 10) -> list[str]:
-    """直近に使った挨拶を返す（書き出しの連日重複を避けるためプロンプトに渡す）。"""
+def load_recent_closings(n: int = 10) -> list[str]:
+    """直近に使った締めの一言を返す（締めの連日重複を避けるためプロンプトに渡す）。
+    挨拶は「おはようございます。」固定にしたため、変化をつけるのは締め。"""
     try:
         if os.path.exists(RECENT_TEXTS_FILE):
             with open(RECENT_TEXTS_FILE, encoding="utf-8") as f:
                 data = json.load(f)
-            return [e.get("greeting", "") for e in data[-n:] if e.get("greeting")]
+            return [e.get("closing", "") for e in data[-n:] if e.get("closing")]
     except Exception:
         pass
     return []
@@ -465,6 +466,7 @@ def generate_sunday_content(today: datetime) -> dict:
         messages=[{"role": "user", "content": prompt}],
     )
     result = extract_json(message.content[0].text)
+    result["greeting"] = "おはようございます。"  # 挨拶は固定（事実でない一文の創作を防ぐ）
     result["courses"] = []  # 定休日はコースなし
     return result
 
@@ -590,40 +592,34 @@ def generate_content(today: datetime) -> dict:
                      "感謝・気遣い・サロンの雰囲気など別の切り口で（毎回変える）")
         closing_hint = "心待ちにしている一言（天気・季節に触れない、1文）"
 
-    recent_greetings = load_recent_greetings(10)
+    recent_closings = load_recent_closings(10)
     avoid_block = ""
-    if recent_greetings:
-        lst = "\n".join(f"・{g}" for g in recent_greetings)
+    if recent_closings:
+        lst = "\n".join(f"・{g}" for g in recent_closings)
         avoid_block = (
-            f"\n\n【最近使った挨拶＝繰り返さない】\n{lst}\n"
-            "書き出しは必ず「おはようございます。」にした上で、その後に続く一言が上記と同じ・似た文にならないようにする。"
+            f"\n\n【最近使った締めの一言＝繰り返さない】\n{lst}\n"
+            "上記と同じ・似た締めにならないよう、毎回違う切り口にする。"
         )
 
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
-以下のルールに従い、今日のInstagramストーリー1枚目の文章をJSONで出力してください。
+今日のInstagramストーリー1枚目の「締めの一言」だけをJSONで出力してください。
+（挨拶「おはようございます。」と満席のお知らせはこちらで付けるので、生成しないでください）
 
 今日：{month}月{day}日{season_label}{weather_line}
 
-【1枚目の構成ルール】
-① 朝の挨拶（必ず「おはようございます。」で始める。その後に続く一言は毎回変える。「今朝は〜天気ですね」の天気定型では始めない）
+【締めの一言のルール】
 {hook_rule}{avoid_block}
 
 【文章ルール（最重要）】
-・必ず「おはようございます。」で書き出す
+・事実でないことを書かない（「準備しています」「〜しています」など、確認できない具体的な行動・状況を勝手に作らない）
 ・曜日（月曜日・火曜日など）には一切触れない・書かない
 ・「ベモーレ」はカタカナ表記のみ（Bemolleは使わない）
 ・「皆さん」は使わない（必ず「皆様」）
-・AIっぽい整いすぎた文章は禁止
-・実際に黒木（オーナー）がそのまま投稿しても違和感ない温度感
-・敬語ベースで柔らかく、現場で話している感じ
-・一文に緩急をつける（短文と中文を混ぜる）
-・誇張表現禁止・無駄な修飾語を削る
-・感情は控えめに乗せる（安心・共感・寄り添い）
-・整いすぎていたらあえて崩す
+・AIっぽい整いすぎた文章は禁止。黒木（オーナー）がそのまま投稿できる温度感
+・敬語ベースで柔らかく、誇張・無駄な修飾語は削る
 
 以下のJSONのみ出力（他は不要）：
 {{
-  "greeting": "「おはようございます。」で始まる朝の挨拶（1〜2文）",
   "closing": "{closing_hint}"
 }}"""
 
@@ -635,9 +631,10 @@ def generate_content(today: datetime) -> dict:
         messages=[{"role": "user", "content": prompt}],
     )
     result = extract_json(message.content[0].text)
+    result["greeting"] = "おはようございます。"  # 挨拶は固定（事実でない一文の創作を防ぐ）
     result["status"] = status   # Pythonで決定した文言をそのまま使う（Claude変更禁止）
     result["courses"] = course_pool
-    save_recent_text(result.get("greeting", ""), result.get("closing", ""))  # 書き出しの連日重複を防ぐ履歴
+    save_recent_text(result["greeting"], result.get("closing", ""))  # 締めの連日重複を防ぐ履歴
     return result
 
 
