@@ -1,0 +1,45 @@
+name: Weekly GBP Post (LINEへ貼るだけ配信)
+
+on:
+  schedule:
+    - cron: "30 23 * * 6"  # 土23:30 UTC = 日 8:30 JST（GH Actionsは遅延あり。cron-job.orgが主系）
+  workflow_dispatch:        # 手動実行（今すぐ1本欲しい時）
+  repository_dispatch:
+    types: [gbp_weekly]     # cron-job.orgからの発火（主系・GH Actionsの遅延/欠落対策）
+
+permissions:
+  contents: write  # gbp_state.json / gbp_used_photos.json を main にプッシュするため
+
+jobs:
+  gbp-post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install anthropic requests
+
+      - name: Generate & deliver GBP post to LINE
+        env:
+          ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
+          IMGBB_API_KEY:             ${{ secrets.IMGBB_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          GOOGLE_REFRESH_TOKEN:      ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_CLIENT_ID:          ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET:      ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: python gbp_post.py
+
+      - name: Save rotation state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add gbp_state.json gbp_used_photos.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: update GBP rotation state [skip ci]"
+          git pull --rebase origin main && git push || echo "push競合スキップ（次回反映）"
