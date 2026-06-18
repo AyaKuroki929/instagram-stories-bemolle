@@ -29,17 +29,13 @@ jobs:
       - name: Generate & deliver GBP post to LINE
         env:
           ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
-          IMGBB_API_KEY:             ${{ secrets.IMGBB_API_KEY }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          GOOGLE_REFRESH_TOKEN:      ${{ secrets.GOOGLE_REFRESH_TOKEN }}
-          GOOGLE_CLIENT_ID:          ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET:      ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: python gbp_post.py
 
       - name: Save rotation state
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add gbp_state.json gbp_used_photos.json 2>/dev/null || true
+          git add gbp_state.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update GBP rotation state [skip ci]"
           git pull --rebase origin main && git push || echo "push競合スキップ（次回反映）"
