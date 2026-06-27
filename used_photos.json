@@ -1,9 +1,4 @@
 {
-  "1bd9akccmTh-_vR12AuiumvydedrqfGp5": {
-    "ts": "2026-06-13T07:01:10.552292+09:00",
-    "hash": "ffefe7f7c3c3c7c0",
-    "series": "_r8a"
-  },
   "1NbDRocUfM6yanW0RQRMCl1mu9WgZDM_w": {
     "ts": "2026-06-14T07:01:25.574604+09:00",
     "hash": "f8fcf0fcecc4c4ec",
@@ -93,5 +88,10 @@
     "ts": "2026-06-27T07:01:05.895193+09:00",
     "hash": "fffffffee0404060",
     "series": "dsc"
+  },
+  "1kADQ7k3dCgyIY0SX-5VG-7Dme2UURBQh": {
+    "ts": "2026-06-28T07:01:09.332432+09:00",
+    "hash": "e3c3c7f3f3df4e07",
+    "series": "補正済み"
   }
 }
