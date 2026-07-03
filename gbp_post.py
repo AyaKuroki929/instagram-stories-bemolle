@@ -19,6 +19,8 @@ JST = timezone(timedelta(hours=9))
 
 ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]
 LINE_TOKEN    = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+# Make.com Webhook（設定されていればGBPへ自動投稿・未設定なら従来のLINE貼るだけ運用）
+MAKE_GBP_WEBHOOK = os.environ.get("MAKE_GBP_WEBHOOK", "")
 
 MODEL = "claude-sonnet-4-6"  # 週1回・コスト軽微。品質を上げたければ claude-opus-4-8 に変更可
 
@@ -125,6 +127,26 @@ def generate_text(theme: dict, recent_texts: list) -> str:
     ).strip()
 
 
+# ── Make.com経由のGBP自動投稿 ──────────────────────────────────
+def post_via_make(body: str) -> bool:
+    """MakeのWebhookに本文を送り、Make側のGBP「Create a Post」で自動投稿する。
+    Makeが承認済みGBP API権限を持つため、こちらでのAPI申請は不要。
+    Webhook未設定・失敗時は False（→従来のLINE貼るだけ運用にフォールバック）。"""
+    if not MAKE_GBP_WEBHOOK:
+        return False
+    import requests
+    try:
+        r = requests.post(MAKE_GBP_WEBHOOK, json={"summary": body}, timeout=20)
+        if r.ok and r.text.strip().lower().startswith("accepted"):
+            print("Make Webhook 送信OK → GBP自動投稿へ")
+            return True
+        print(f"Make Webhook 応答異常: {r.status_code} {r.text[:100]}", file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f"Make Webhook 送信失敗: {e}", file=sys.stderr)
+        return False
+
+
 # ── LINE 配信（Claude通知Bot へ broadcast・実装は story/util.py）─
 def send_line(messages: list) -> None:
     line_broadcast(messages, token=LINE_TOKEN, raise_on_error=True)
@@ -147,16 +169,27 @@ def main() -> None:
     body = generate_text(theme, state.get("recent_texts", []))
     print("=== 生成本文 ===\n" + body + "\n================")
 
-    # LINE配信（①案内 ②コピー用の本文だけ）
-    header = (
-        "📍 今週のGoogleビジネスプロフィール投稿\n"
-        f"テーマ：{theme['label']}\n\n"
-        "下の本文をコピーして貼り付けて投稿してください。\n"
-        "ボタンは「詳細」→ LINE予約URL がおすすめです。"
-    )
+    # GBP自動投稿（Make Webhook設定済みなら）→ 失敗時は従来のLINE貼るだけ運用
+    auto_posted = post_via_make(body)
+
+    # LINE配信（①案内 ②本文）
+    if auto_posted:
+        header = (
+            "📍 今週のGoogleビジネスプロフィール投稿\n"
+            f"テーマ：{theme['label']}\n\n"
+            "✅ Make経由でGBPへ自動投稿しました（貼り付け不要）。\n"
+            "内容は下の本文のとおりです。数分後にGBPで確認できます。"
+        )
+    else:
+        header = (
+            "📍 今週のGoogleビジネスプロフィール投稿\n"
+            f"テーマ：{theme['label']}\n\n"
+            "下の本文をコピーして貼り付けて投稿してください。\n"
+            "ボタンは「詳細」→ LINE予約URL がおすすめです。"
+        )
     send_line([
         {"type": "text", "text": header},
-        {"type": "text", "text": body},  # ← これだけをコピーすればOK
+        {"type": "text", "text": body},  # ← 確認用（手動時はこれをコピー）
     ])
     print("LINE配信 完了")
 
