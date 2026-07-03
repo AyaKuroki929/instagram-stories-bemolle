@@ -4,56 +4,16 @@ Claude（Haiku）による投稿文の生成と、その材料になる季節判
 """
 from __future__ import annotations
 
-import json
 import os
 import random
 import sys
 from datetime import datetime
 
-import anthropic
 import requests
 
 from .config import ANTHROPIC_KEY, COURSES_FACIAL, COURSES_SLIM
 from .state import load_recent_closings, save_recent_text
-
-
-def extract_json(text: str) -> dict:
-    """括弧の深さを追跡して最初のJSONオブジェクトを正確に抽出する"""
-    start = text.find("{")
-    if start == -1:
-        raise ValueError("JSONが見つかりません")
-    depth = 0
-    in_string = False
-    escape = False
-    for i, ch in enumerate(text[start:], start):
-        if escape:
-            escape = False
-            continue
-        if ch == "\\" and in_string:
-            escape = True
-            continue
-        if ch == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(text[start:i + 1])
-    raise ValueError("JSONの終端が見つかりません")
-
-
-def _message_text(message) -> str:
-    """Claude応答からテキスト部分を安全に取り出す。
-    従来の message.content[0].text は content が空だと IndexError で
-    原因の分かりにくい失敗になるため、テキストブロックを結合して返す。"""
-    text = "".join(b.text for b in message.content if getattr(b, "type", "") == "text")
-    if not text:
-        raise ValueError(f"Claude応答にテキストがありません（stop_reason={message.stop_reason}）")
-    return text
+from .util import claude_text, extract_json
 
 
 # ── 季節判定（月＋日）─────────────────────────────────────────
@@ -125,14 +85,13 @@ def generate_sunday_content(today: datetime) -> dict:
   "closing": "明日からの営業再開（1文・簡潔に）"
 }}"""
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    message = client.messages.create(
+    result = extract_json(claude_text(
         model="claude-haiku-4-5-20251001",
         max_tokens=512,
         temperature=1,
         messages=[{"role": "user", "content": prompt}],
-    )
-    result = extract_json(_message_text(message))
+        api_key=ANTHROPIC_KEY,
+    ))
     result["greeting"] = "おはようございます。"  # 挨拶は固定（事実でない一文の創作を防ぐ）
     result["courses"] = []  # 定休日はコースなし
     return result
@@ -290,14 +249,13 @@ def generate_content(today: datetime) -> dict:
   "closing": "{closing_hint}"
 }}"""
 
-    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    message = client.messages.create(
+    result = extract_json(claude_text(
         model="claude-haiku-4-5-20251001",
         max_tokens=512,
         temperature=1,
         messages=[{"role": "user", "content": prompt}],
-    )
-    result = extract_json(_message_text(message))
+        api_key=ANTHROPIC_KEY,
+    ))
     result["greeting"] = "おはようございます。"  # 挨拶は固定（事実でない一文の創作を防ぐ）
     result["status"] = status   # Pythonで決定した文言をそのまま使う（Claude変更禁止）
     result["courses"] = course_pool
