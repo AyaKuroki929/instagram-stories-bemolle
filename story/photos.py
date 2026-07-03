@@ -120,6 +120,26 @@ def load_fallback_photo() -> bytes | None:
     return None
 
 
+def _score_candidates(candidates: list[dict], recent_h: list[str]) -> list[tuple[int, dict]]:
+    """各候補の「直近写真との最小ahash距離」をサムネイルで採点して返す。
+    距離が大きい＝直近と似ていない。サムネ取得失敗は64（未知＝十分に異なる扱い）。"""
+    scored = []
+    for c in candidates:
+        score = 64  # サムネ取得失敗＝未知。十分に異なる扱い
+        thumb_url = c.get("thumbnailLink")
+        if thumb_url:
+            try:
+                tr = requests.get(thumb_url, timeout=10)
+                if tr.status_code == 200:
+                    h = photo_ahash(tr.content)
+                    if h:
+                        score = min(hash_distance(h, rh) for rh in recent_h)
+            except Exception:
+                pass  # サムネ取得失敗は無視（score=64のまま）
+        scored.append((score, c))
+    return scored
+
+
 # ── Google Drive から背景写真を取得（コース内容に連動） ─────────
 def get_drive_photo(course_pool: list[str]) -> bytes | None:
     if not GDRIVE_REFRESH:
@@ -146,11 +166,32 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
         else:
             folder_ids = [GDRIVE_FOLDER_COMMON, GDRIVE_FOLDER]
 
-        # 優先フォルダから順に写真を探す
         auth_headers = {"Authorization": f"Bearer {token}"}
         used = load_used_photos()
         recent_h = get_recent_hashes(SIMILARITY_DAYS)
         recent_series = get_recent_series(SERIES_DAYS)
+
+        def _fetch_and_record(chosen: dict, reset_label: str) -> bytes:
+            """選んだ写真をダウンロードし、使用履歴・予備写真を記録する。"""
+            r3 = requests.get(
+                f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
+                headers=auth_headers,
+                params={"alt": "media"},
+                timeout=30,
+            )
+            r3.raise_for_status()
+            h_full = photo_ahash(r3.content)
+            save_used_photo(chosen["id"], h_full, series_key(chosen["name"]))
+            save_fallback_photo(r3.content)  # 予備写真キャッシュ（Drive障害時の背景）
+            print(f"Drive写真: {chosen['name']}（シリーズ:{series_key(chosen['name'])}）{reset_label}")
+            return r3.content
+
+        # 優先フォルダから順に写真を探す。
+        # 従来は「写真が1枚でもあるフォルダ」で確定していたため、優先フォルダの候補が
+        # 全部『直近と類似』でもそこから選んでしまい、似た写真が連日出た（2026-07-03実害）。
+        # → 優先フォルダの候補が全滅（全候補が類似）の場合は次のフォルダも探索し、
+        #   それでも全滅なら全フォルダ横断で「最も差がある1枚」を選ぶ。
+        exhausted = []  # 各フォルダのベスト（全フォルダ類似だった場合の横断選択用）
 
         for folder_id in folder_ids:
             r2 = requests.get(
@@ -181,46 +222,31 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
                 else:
                     print(f"  {folder_id[:8]}は直近シリーズ以外なし→シリーズ制限を一時解除", file=sys.stderr)
 
+            # 履歴が無ければ類似判定できない → 従来どおり優先フォルダからランダム
+            if not recent_h:
+                return _fetch_and_record(random.choice(candidates), reset_label)
+
             # 類似回避は「直近と最も似ていない候補」を選ぶ（max-min距離方式）。
             # 旧方式の「しきい値を満たす最初の1枚」だと、しきい値ぎりぎり（距離9 vs 閾値8）の
             # 酷似写真がすり抜けて数日連続で似た写真が出ていたため、全候補を採点して最大化する。
-            if recent_h and len(candidates) > 1:
-                scored = []
-                for c in candidates:
-                    score = 64  # サムネ取得失敗＝未知。十分に異なる扱い
-                    thumb_url = c.get("thumbnailLink")
-                    if thumb_url:
-                        try:
-                            tr = requests.get(thumb_url, timeout=10)
-                            if tr.status_code == 200:
-                                h = photo_ahash(tr.content)
-                                if h:
-                                    score = min(hash_distance(h, rh) for rh in recent_h)
-                        except Exception:
-                            pass  # サムネ取得失敗は無視（score=64のまま）
-                    scored.append((score, c))
-                best = max(s for s, _ in scored)
-                chosen = random.choice([c for s, c in scored if s == best])  # 同点はランダム
-                if best <= SIMILARITY_THRESHOLD:
-                    print(f"⚠️ 全候補が直近と類似（最大min距離={best}≤{SIMILARITY_THRESHOLD}）。"
-                          f"最も差がある写真を選択（要：素材追加）")
-                else:
-                    print(f"類似回避OK: 直近との最小ahash距離={best}の写真を選択")
-            else:
-                chosen = random.choice(candidates)
+            scored = _score_candidates(candidates, recent_h)
+            best = max(s for s, _ in scored)
+            best_cands = [c for s, c in scored if s == best]
 
-            r3 = requests.get(
-                f"https://www.googleapis.com/drive/v3/files/{chosen['id']}",
-                headers=auth_headers,
-                params={"alt": "media"},
-                timeout=30,
-            )
-            r3.raise_for_status()
-            h_full = photo_ahash(r3.content)
-            save_used_photo(chosen["id"], h_full, series_key(chosen["name"]))
-            save_fallback_photo(r3.content)  # 予備写真キャッシュ（Drive障害時の背景）
-            print(f"Drive写真: {chosen['name']}（シリーズ:{series_key(chosen['name'])}）{reset_label}")
-            return r3.content
+            if best > SIMILARITY_THRESHOLD:
+                print(f"類似回避OK: 直近との最小ahash距離={best}の写真を選択")
+                return _fetch_and_record(random.choice(best_cands), reset_label)  # 同点はランダム
+
+            # このフォルダは全候補が直近と類似 → 確定せず次の優先フォルダも探索
+            print(f"  {folder_id[:8]}…は全候補が直近と類似（最大min距離={best}）→ 次のフォルダも探索")
+            exhausted.append((best, best_cands, reset_label))
+
+        # 全フォルダで「類似」だった場合：横断で最も差がある1枚を選ぶ
+        if exhausted:
+            best, best_cands, reset_label = max(exhausted, key=lambda x: x[0])
+            print(f"⚠️ 全フォルダで候補が直近と類似（最大min距離={best}≤{SIMILARITY_THRESHOLD}）。"
+                  f"最も差がある写真を選択（要：素材追加）")
+            return _fetch_and_record(random.choice(best_cands), reset_label)
 
         return None
     except Exception as e:
