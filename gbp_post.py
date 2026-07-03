@@ -172,26 +172,23 @@ def main() -> None:
     # GBP自動投稿（Make Webhook設定済みなら）→ 失敗時は従来のLINE貼るだけ運用
     auto_posted = post_via_make(body)
 
-    # LINE配信（①案内 ②本文）
+    # LINE通知は「失敗時（＝手動対応が必要な時）だけ」送る運用。
+    # Make経由で自動投稿できた場合は成功通知を出さない（通知は本当に対応が要る時だけ届く）。
     if auto_posted:
-        header = (
-            "📍 今週のGoogleビジネスプロフィール投稿\n"
-            f"テーマ：{theme['label']}\n\n"
-            "✅ Make経由でGBPへ自動投稿しました（貼り付け不要）。\n"
-            "内容は下の本文のとおりです。数分後にGBPで確認できます。"
-        )
+        print("Make経由でGBP自動投稿 完了（成功通知は送らない設定）")
     else:
+        # 自動投稿できなかった＝人が貼り付ける必要がある → この時だけLINEに送る
         header = (
-            "📍 今週のGoogleビジネスプロフィール投稿\n"
+            "⚠️ GBP自動投稿ができませんでした（手動対応が必要）\n"
             f"テーマ：{theme['label']}\n\n"
-            "下の本文をコピーして貼り付けて投稿してください。\n"
+            "下の本文をコピーしてGBPに貼り付けてください。\n"
             "ボタンは「詳細」→ LINE予約URL がおすすめです。"
         )
-    send_line([
-        {"type": "text", "text": header},
-        {"type": "text", "text": body},  # ← 確認用（手動時はこれをコピー）
-    ])
-    print("LINE配信 完了")
+        send_line([
+            {"type": "text", "text": header},
+            {"type": "text", "text": body},  # 貼り付け用
+        ])
+        print("LINE配信 完了（自動投稿失敗の手動フォールバック案内）")
 
     # 状態更新（テーマ位置・直近本文）
     recent = (state.get("recent_texts", []) + [body])[-6:]
