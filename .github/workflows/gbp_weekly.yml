@@ -2,10 +2,13 @@ name: Weekly GBP Post (LINEへ貼るだけ配信)
 
 on:
   schedule:
-    - cron: "30 23 * * 6"  # 土23:30 UTC = 日 8:30 JST（GH Actionsは遅延あり。cron-job.orgが主系）
+    # 週2回投稿（2026 AIO/ローカルSEOの推奨頻度。プロフィールのアクティビティ score が
+    # 上位3枠表示率を1.4倍にする＝新鮮さがAIの推薦シグナル）。テーマは6種を輪番。
+    - cron: "30 23 * * 6"  # 土23:30 UTC = 日 8:30 JST
+    - cron: "30 23 * * 2"  # 火23:30 UTC = 水 8:30 JST
   workflow_dispatch:        # 手動実行（今すぐ1本欲しい時）
   repository_dispatch:
-    types: [gbp_weekly]     # cron-job.orgからの発火（主系・GH Actionsの遅延/欠落対策）
+    types: [gbp_weekly]     # cron-job.orgからの発火（GH Actionsの遅延/欠落対策）
 
 permissions:
   contents: write  # gbp_state.json / gbp_used_photos.json を main にプッシュするため
