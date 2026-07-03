@@ -1,0 +1,35 @@
+name: Report Helper - IG feed count (月次レポート用・読み取り専用)
+
+# グルコン月次集客レポートの「インスタ投稿：○投稿」を自動集計する。
+# 手動 or `gh workflow run report_helper.yml -f months=2026-06,2026-07` で実行し、
+# 結果はログに出力される（投稿・書き込みは一切しない）。
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: '対象月（YYYY-MM をカンマ区切り。空=前月＋当月）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests -q
+
+      - name: Count IG feed posts
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN_STORIES }}
+        run: python ig_report_helper.py "${{ github.event.inputs.months }}"
