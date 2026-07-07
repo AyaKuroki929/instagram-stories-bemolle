@@ -164,6 +164,14 @@ def notify_error(msg: str) -> None:
 def main() -> None:
     state = load_json(STATE_FILE, {"last_index": -1, "recent_texts": []})
 
+    # 同日二重実行ガード: schedule と repository_dispatch の両方が同日に発火したり
+    # まれな二重発火があると、同じ日に2本投稿されテーマ輪番も2つ進んでしまう。
+    # 手動実行(workflow_dispatch等)で意図的に追加したい時は GBP_FORCE=1 で通す。
+    today_str = datetime.now(JST).strftime("%Y-%m-%d")
+    if state.get("last_date") == today_str and not os.environ.get("GBP_FORCE"):
+        print(f"本日({today_str})は投稿済み → スキップ（二重実行ガード）")
+        return
+
     # テーマ輪番（直前と同じにならないよう次へ）
     idx = (state.get("last_index", -1) + 1) % len(THEMES)
     theme = THEMES[idx]
@@ -181,11 +189,14 @@ def main() -> None:
     if auto_posted:
         print("Make経由でGBP自動投稿 完了（成功通知は送らない設定）")
     else:
-        # 自動投稿できなかった＝人が貼り付ける必要がある → この時だけLINEに送る
+        # 自動投稿できなかった＝人が貼り付ける必要がある → この時だけLINEに送る。
+        # 注意: タイムアウト/応答喪失ではMake側は受理済み＝投稿される可能性があるため、
+        # 貼る前にGBPを確認してもらう（二重投稿防止）。
         header = (
             "⚠️ GBP自動投稿ができませんでした（手動対応が必要）\n"
             f"テーマ：{theme['label']}\n\n"
-            "下の本文をコピーしてGBPに貼り付けてください。\n"
+            "【重要】通信タイムアウトの場合はMake側で投稿済みの可能性があります。\n"
+            "先にGBPに今日の投稿が無いか確認し、無ければ下の本文を貼り付けてください。\n"
             "ボタンは「詳細」→ LINE予約URL がおすすめです。"
         )
         send_line([
@@ -194,9 +205,14 @@ def main() -> None:
         ])
         print("LINE配信 完了（自動投稿失敗の手動フォールバック案内）")
 
-    # 状態更新（テーマ位置・直近本文）
-    recent = (state.get("recent_texts", []) + [body])[-6:]
-    save_json(STATE_FILE, {"last_index": idx, "recent_texts": recent})
+    # 状態更新（テーマ位置・直近本文・投稿日）
+    # 投稿は既に完了しているため、ここで失敗しても「生成に失敗」と誤解される通知を出さない
+    try:
+        recent = (state.get("recent_texts", []) + [body])[-6:]
+        save_json(STATE_FILE, {"last_index": idx, "recent_texts": recent, "last_date": today_str})
+    except Exception as e:
+        print(f"状態保存に失敗（投稿自体は完了済み）: {e}", file=sys.stderr)
+        notify_error(f"⚠️ GBP投稿は完了しましたが状態保存に失敗しました（次回同テーマが再投稿される可能性）。\n{type(e).__name__}: {str(e)[:200]}")
 
 
 if __name__ == "__main__":

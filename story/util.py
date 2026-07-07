@@ -17,17 +17,26 @@ import requests
 
 # ── JSON状態ファイル ──────────────────────────────────────────
 def load_json(path: str, default):
-    """JSONファイルを読む。無い・壊れている場合は default を返す。"""
+    """JSONファイルを読む。無い場合は default。壊れている場合は default を返すが、
+    「ファイルなし」と区別できるよう stderr に警告を出す（静かな状態リセットの検知用）。"""
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except FileNotFoundError:
+        return default
+    except Exception as e:
+        print(f"[util] JSON破損を検出（defaultで継続）: {path}: {e}", file=sys.stderr)
         return default
 
 
 def save_json(path: str, data) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    """一時ファイル→os.replace のアトミック書き込み。
+    直書きだと書き込み途中の kill（timeout等）でファイルが壊れ、
+    次回読み込みが黙って初期状態に戻る（クールダウン全解除・二重投稿の温床）。"""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
 
 # ── Claude応答の取り扱い ──────────────────────────────────────

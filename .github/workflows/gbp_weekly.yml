@@ -13,6 +13,11 @@ on:
 permissions:
   contents: write  # gbp_state.json / gbp_used_photos.json を main にプッシュするため
 
+# schedule と repository_dispatch の同時発火で2本生成・二重投稿になるのを防ぐ
+concurrency:
+  group: gbp-weekly
+  cancel-in-progress: false
+
 jobs:
   gbp-post:
     runs-on: ubuntu-latest
@@ -42,4 +47,13 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add gbp_state.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update GBP rotation state [skip ci]"
-          git pull --rebase origin main && git push || echo "push競合スキップ（次回反映）"
+          # push失敗＝輪番が進まず同テーマ連投になるため1回だけリトライ
+          git pull --rebase origin main && git push || { sleep 8; git pull --rebase origin main && git push; } || echo "push競合スキップ（次回反映）"
+
+      - name: Notify on workflow failure
+        if: failure()
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 GBP週次投稿ワークフローが失敗しました。GitHub Actionsのログを確認してください。"}]}'

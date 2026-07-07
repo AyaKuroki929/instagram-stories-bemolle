@@ -85,8 +85,11 @@ def save_used_photo(file_id: str, photo_hash: str = "", series: str = "") -> Non
     used = load_used_photos()
     used[file_id] = {"ts": datetime.now(JST).isoformat(), "hash": photo_hash, "series": series}
     try:
-        with open(USED_PHOTOS_FILE, "w", encoding="utf-8") as f:
+        # アトミック書き込み（途中killでの破損＝クールダウン全解除を防ぐ）
+        tmp = USED_PHOTOS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(used, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, USED_PHOTOS_FILE)
     except Exception as e:
         print(f"used_photos.json 保存失敗: {e}", file=sys.stderr)
 
@@ -113,8 +116,10 @@ def save_recent_text(greeting: str, closing: str = "") -> None:
                 data = json.load(f)
         data.append({"date": datetime.now(JST).date().isoformat(),
                      "greeting": greeting, "closing": closing})
-        with open(RECENT_TEXTS_FILE, "w", encoding="utf-8") as f:
+        tmp = RECENT_TEXTS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data[-30:], f, ensure_ascii=False, indent=2)
+        os.replace(tmp, RECENT_TEXTS_FILE)
     except Exception as e:
         print(f"recent_texts.json保存失敗: {e}", file=sys.stderr)
 
@@ -136,11 +141,13 @@ def posted_today_local(path: str = LAST_POST_FILE) -> bool:
 def mark_posted_local(path: str = LAST_POST_FILE) -> None:
     """投稿成功時に最終投稿日マーカーを更新（workflowがcommit/pushして永続化）。"""
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(
                 {"date": datetime.now(JST).date().isoformat(),
                  "ts": datetime.now(JST).isoformat()},
                 f, ensure_ascii=False, indent=2,
             )
+        os.replace(tmp, path)
     except Exception as e:
         print(f"last_post.json保存失敗: {e}", file=sys.stderr)

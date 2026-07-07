@@ -15,6 +15,12 @@ on:
 permissions:
   contents: write  # used_photos.json を main にプッシュするため
 
+# 主系(cron-job.org)と予備(GitHub schedule)が同時刻に発火しても並走させない。
+# 並走すると両方が古い last_post.json を読み「未投稿」と誤判定→二重投稿になるため。
+concurrency:
+  group: daily-story
+  cancel-in-progress: false
+
 jobs:
   post-story:
     runs-on: ubuntu-latest
@@ -58,4 +64,27 @@ jobs:
           [ -f recent_texts.json ] && git add recent_texts.json || true
           [ -d fallback_photos ] && git add fallback_photos || true
           git diff --staged --quiet || git commit -m "chore: update used_photos [skip ci]"
-          git pull --rebase origin main && git push || echo "push競合スキップ（写真ローテーションは次回反映）"
+          # push失敗＝投稿マーカー喪失＝予備cronが二重投稿する重大事象なのでリトライ＋通知
+          ok=""
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push; then ok=1; break; fi
+            echo "push失敗 ($i/3) → リトライ"; sleep $((i*5))
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::push failed after retries"
+            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d '{"messages":[{"type":"text","text":"🚨 ストーリー投稿: 状態ファイルのpushに3回失敗しました。予備cronが二重投稿する恐れがあります。Actionsを確認してください。"}]}'
+            exit 1
+          fi
+
+      # インフラ層の失敗（Secret欠落・timeout kill・pip失敗等）はPython内の通知に
+      # 到達しないため、ジョブ失敗時はワークフロー側からLINEに知らせる
+      - name: Notify on workflow failure
+        if: failure()
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 毎朝のIGストーリー投稿ワークフローが失敗しました（Secret欠落/タイムアウト等のインフラ層の可能性）。GitHub Actionsのログを確認してください。"}]}'
