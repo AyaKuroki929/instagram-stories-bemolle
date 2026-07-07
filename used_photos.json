@@ -1,9 +1,4 @@
 {
-  "1mOFGVOoFGG_YGQKRcx36htmT3sL9mYQa": {
-    "ts": "2026-06-24T07:01:12.190127+09:00",
-    "hash": "f9f9c181e1018585",
-    "series": "20250112-"
-  },
   "1Lmot5EYmLl6A-X7RA5Q8o8h0sSscDPmx": {
     "ts": "2026-06-25T07:01:26.285771+09:00",
     "hash": "f9f0e27c1e1f19b8",
@@ -68,5 +63,10 @@
     "ts": "2026-07-07T07:01:50.634639+09:00",
     "hash": "0f0f1efcfc9fefff",
     "series": ""
+  },
+  "19XmanTZDIDDoyrJmJixhDl-i_JdRgEPV": {
+    "ts": "2026-07-08T07:01:30.616334+09:00",
+    "hash": "ffffdf0703030387",
+    "series": "dsc"
   }
 }
