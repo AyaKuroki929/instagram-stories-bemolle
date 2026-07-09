@@ -1,0 +1,45 @@
+name: Post Instagram Reel - @bemolle_diet
+
+# 手動起動のみ。Drive「リール/投稿キュー」の3点セット（動画/表紙/キャプション）を投稿する
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: post-reel
+  cancel-in-progress: false
+
+jobs:
+  post-reel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post reel
+        env:
+          META_ACCESS_TOKEN:        ${{ secrets.META_ACCESS_TOKEN_STORIES }}
+          ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+          IMGBB_API_KEY:            ${{ secrets.IMGBB_API_KEY }}
+          BLOB_READ_WRITE_TOKEN:    ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          GOOGLE_REFRESH_TOKEN:     ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_CLIENT_ID:         ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET:     ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: python post_reel.py
+
+      - name: Notify on workflow failure
+        if: failure()
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 リール投稿ワークフローが失敗しました（インフラ層の可能性）。GitHub Actionsのログを確認してください。"}]}'
