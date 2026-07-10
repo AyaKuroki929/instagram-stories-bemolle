@@ -1,9 +1,4 @@
 {
-  "1gPMWLcHC-6R6lABfpzVxFpO_NXOmWBee": {
-    "ts": "2026-06-27T07:01:05.895193+09:00",
-    "hash": "fffffffee0404060",
-    "series": "dsc"
-  },
   "1kADQ7k3dCgyIY0SX-5VG-7Dme2UURBQh": {
     "ts": "2026-06-28T07:01:09.332432+09:00",
     "hash": "e3c3c7f3f3df4e07",
@@ -68,5 +63,10 @@
     "ts": "2026-07-10T07:01:25.689469+09:00",
     "hash": "ffffffc080ffffff",
     "series": "139a"
+  },
+  "1bKuOWVbX0oPj3AHDlvHzBsOXMdvd6kC9": {
+    "ts": "2026-07-11T07:01:47.982306+09:00",
+    "hash": "e1f3fdf9f9f9c0c0",
+    "series": "mur_"
   }
 }
