@@ -1,0 +1,34 @@
+name: Restore Drive File Revision
+
+# Driveのファイルを過去の版に復元する（BA動画などの誤上書き復旧用）
+on:
+  workflow_dispatch:
+    inputs:
+      filename:
+        description: '復元するファイル名（完全一致）'
+        required: true
+        type: string
+      revision_index:
+        description: '戻す版のindex（0=最古）'
+        required: false
+        default: '0'
+        type: string
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - name: Restore revision
+        env:
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          RESTORE_FILENAME:       ${{ github.event.inputs.filename }}
+          RESTORE_REVISION_INDEX: ${{ github.event.inputs.revision_index }}
+        run: python restore_revision.py
