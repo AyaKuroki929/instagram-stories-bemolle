@@ -80,6 +80,7 @@ jobs:
               -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
               -H "Content-Type: application/json" \
               -d '{"messages":[{"type":"text","text":"🚨 ストーリー投稿: 状態ファイルのpushに3回失敗しました。予備cronが二重投稿する恐れがあります。Actionsを確認してください。"}]}'
+            touch .line_notified  # 直後の failure() 汎用通知と二重送信しないための印
             exit 1
           fi
 
