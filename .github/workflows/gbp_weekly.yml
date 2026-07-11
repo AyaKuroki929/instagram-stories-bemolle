@@ -24,7 +24,11 @@ jobs:
     timeout-minutes: 8
 
     steps:
+      # ref: main を明示。デフォルトはイベント発生時点のSHAのため、concurrencyキュー
+      # 待ちの間にpushされた同日ガード(last_date)を見落として二重投稿する穴を塞ぐ。
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -47,12 +51,27 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add gbp_state.json 2>/dev/null || true
           git diff --staged --quiet || git commit -m "chore: update GBP rotation state [skip ci]"
-          # push失敗＝輪番が進まず同テーマ連投になるため1回だけリトライ
-          git pull --rebase origin main && git push || { sleep 8; git pull --rebase origin main && git push; } || echo "push競合スキップ（次回反映）"
+          # push失敗＝同日ガード(last_date)と輪番が消え、同日二重投稿・同テーマ連投になる。
+          # runnerは使い捨てなので「次回反映」は不可能 → リトライ＋失敗時は通知して落とす。
+          ok=""
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push; then ok=1; break; fi
+            echo "push失敗 ($i/3) → リトライ"; sleep $((i*5))
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::push failed after retries"
+            curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+              -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d '{"messages":[{"type":"text","text":"🚨 GBP投稿: 状態ファイルのpushに3回失敗。同日の再発火で二重投稿・同テーマ連投の恐れがあります。Actionsを確認してください。"}]}'
+            exit 1
+          fi
 
       - name: Notify on workflow failure
         if: failure()
         run: |
+          # Python側が🚨/⚠️を送信済みなら重複送信しない（LINE枠節約）
+          if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
             -H "Content-Type: application/json" \

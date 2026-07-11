@@ -39,6 +39,8 @@ jobs:
       - name: Notify on workflow failure
         if: failure()
         run: |
+          # Python側が🚨/⚠️を送信済みなら重複送信しない（LINE枠節約）
+          if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
             -H "Content-Type: application/json" \

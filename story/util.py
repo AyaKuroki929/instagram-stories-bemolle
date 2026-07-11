@@ -104,6 +104,15 @@ def line_broadcast(messages, token: str = "", *, raise_on_error: bool = False, t
         )
         if not r.ok:
             raise Exception(f"LINE broadcast {r.status_code}: {r.text[:200]}")
+        # 障害通知(🚨/⚠️)をPython側から送れた印。workflowの failure() ステップは
+        # この印があれば重複送信をスキップする（1障害＝broadcast2通の浪費を防ぐ）。
+        try:
+            if any("🚨" in m.get("text", "") or "⚠️" in m.get("text", "")
+                   for m in messages if isinstance(m, dict)):
+                with open(".line_notified", "w") as f:
+                    f.write("1")
+        except Exception:
+            pass
         return True
     except Exception as e:
         if raise_on_error:

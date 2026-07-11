@@ -90,10 +90,12 @@ def download(headers: dict, file_id: str) -> bytes:
 
 
 def move_to_done(headers: dict, file_id: str, queue_id: str, done_id: str) -> None:
-    requests.patch(f"https://www.googleapis.com/drive/v3/files/{file_id}",
-                   headers=headers,
-                   params={"addParents": done_id, "removeParents": queue_id},
-                   timeout=15)
+    # 移動失敗＝キューに残る＝次回同じリールを二重投稿するため、必ず応答を検査する
+    r = requests.patch(f"https://www.googleapis.com/drive/v3/files/{file_id}",
+                       headers=headers,
+                       params={"addParents": done_id, "removeParents": queue_id},
+                       timeout=15)
+    r.raise_for_status()
 
 
 # ── Vercel Blob ───────────────────────────────────────────────
@@ -185,13 +187,20 @@ def main() -> None:
         raise Exception("Driveに「リール/投稿キュー」フォルダが見つかりません")
 
     files = list_queue(headers, queue_id)
-    video = next((f for f in files if f["name"].lower().endswith(".mp4")), None)
-    cover = next((f for f in files if f["name"].lower().endswith((".png", ".jpg", ".jpeg"))), None)
-    caption_file = next((f for f in files if f["name"].lower().endswith(".txt")), None)
+    videos = [f for f in files if f["name"].lower().endswith(".mp4")]
+    covers = [f for f in files if f["name"].lower().endswith((".png", ".jpg", ".jpeg"))]
+    captions = [f for f in files if f["name"].lower().endswith(".txt")]
 
-    if not video:
+    if not videos:
         print("投稿キューに動画がありません。終了します。")
         return
+    # 2セット以上あると「最新の動画×古い表紙×古いキャプション」の混線投稿になるため中断する
+    if len(videos) > 1 or len(covers) > 1 or len(captions) > 1:
+        names = ", ".join(f["name"] for f in videos + covers + captions)
+        raise Exception(
+            f"投稿キューに複数セットが混在しています（{names}）。"
+            "組み合わせ間違い防止のため、1セット（動画・表紙・キャプション各1つ）だけ置いてください")
+    video, cover, caption_file = videos[0], covers[0] if covers else None, captions[0] if captions else None
     if not cover or not caption_file:
         raise Exception(f"3点セットが揃っていません（動画:{bool(video)} 表紙:{bool(cover)} キャプション:{bool(caption_file)}）")
 
@@ -211,13 +220,31 @@ def main() -> None:
     permalink = get_permalink(media_id)
     print(f"投稿完了: media_id={media_id} {permalink}")
 
-    # キューを空にして二重投稿を防ぐ
-    done_id = ensure_folder(headers, DONE_FOLDER_NAME, reel_parent)
-    for f in (video, cover, caption_file):
-        move_to_done(headers, f["id"], queue_id, done_id)
-    print("キューのファイルを「投稿済み」へ移動しました")
-
-    notify(f"🎬 リール投稿が完了しました！\n{video['name']}\n{permalink or '(URL取得なし)'}")
+    # ここから先はリール公開「後」の後処理。失敗しても「投稿失敗」と誤通知せず、
+    # 二重投稿の危険（キュー未移動）を正しく伝える。
+    try:
+        done_id = ensure_folder(headers, DONE_FOLDER_NAME, reel_parent)
+        failed_moves = []
+        for f in (video, cover, caption_file):
+            try:
+                move_to_done(headers, f["id"], queue_id, done_id)
+            except Exception as e:
+                failed_moves.append(f["name"])
+                print(f"移動失敗: {f['name']}: {e}", file=sys.stderr)
+        if failed_moves:
+            notify("⚠️ リール投稿は成功しましたが、キューの移動に失敗したファイルがあります\n"
+                   f"{', '.join(failed_moves)}\n"
+                   f"{permalink or ''}\n"
+                   "⚠️ 次に投稿を実行すると同じリールが二重投稿されます。"
+                   "Driveの「リール/投稿キュー」から手で「投稿済み」へ移動してください。")
+            return
+        print("キューのファイルを「投稿済み」へ移動しました")
+        notify(f"🎬 リール投稿が完了しました！\n{video['name']}\n{permalink or '(URL取得なし)'}")
+    except Exception as e:
+        print(f"後処理エラー（投稿自体は成功済み）: {e}", file=sys.stderr)
+        notify("⚠️ リール投稿は成功しましたが、後処理でエラーが発生しました\n"
+               f"{str(e)[:200]}\n"
+               "⚠️ キューが残っている場合、再実行すると二重投稿になります。Driveを確認してください。")
 
 
 if __name__ == "__main__":

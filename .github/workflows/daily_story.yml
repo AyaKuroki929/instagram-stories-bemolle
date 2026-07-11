@@ -27,7 +27,11 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      # ref: main を明示。デフォルトはイベント発生時点のSHAのため、concurrencyキュー
+      # 待ちの間にpushされた投稿マーカーを見落として二重投稿する穴を塞ぐ。
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Install Japanese fonts
         run: sudo apt-get install -y fonts-noto-cjk
@@ -84,6 +88,8 @@ jobs:
       - name: Notify on workflow failure
         if: failure()
         run: |
+          # Python側が🚨/⚠️を送信済みなら重複送信しない（LINE枠節約）
+          if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
           curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
             -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
             -H "Content-Type: application/json" \

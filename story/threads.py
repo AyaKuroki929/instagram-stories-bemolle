@@ -5,6 +5,7 @@ Instagramストーリーに投稿する（STORY_MODE=threads で実行）。
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -52,61 +53,86 @@ def fetch_thread_continuation(root_id: str) -> list[str]:
 
 def get_threads_latest_post() -> dict | None:
     """今日(JST)の『朝(4〜11時)の投稿』を最優先で返す。無ければ『夜(19〜24時)の投稿』。
-    昼(11〜19時)のツリー投稿は絶対に選ばない。選んだ投稿がツリー(連投)なら続きを結合して全文にする。"""
+    昼(11〜19時)のツリー投稿は絶対に選ばない。選んだ投稿がツリー(連投)なら続きを結合して全文にする。
+    トークン未設定・API失敗は例外を投げる（「投稿なし」と混同すると失効に何週間も気づけないため）。"""
     if not THREADS_TOKEN:
-        print("THREADS_API_TOKEN_BEMOLLE 未設定", file=sys.stderr)
+        raise RuntimeError("THREADS_API_TOKEN_BEMOLLE が未設定です（Secret欠落かトークン失効の可能性）")
+    r = requests.get(f"{THREADS_API}/me/threads", params={
+        "fields": "id,text,timestamp,permalink,topic_tag,is_reply,root_post",
+        "limit": 25,
+        "access_token": THREADS_TOKEN,
+    }, timeout=20)
+    r.raise_for_status()
+    items = r.json().get("data", [])
+    today = datetime.now(JST).date()
+    morning, night = [], []
+    for item in items:
+        if item.get("is_reply"):
+            continue  # 連投の2部目以降は「先頭(root)」の候補にしない
+        text = (item.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            dt = datetime.fromisoformat(
+                item.get("timestamp", "").replace("Z", "+00:00")).astimezone(JST)
+        except Exception:
+            continue
+        if dt.date() != today:
+            continue
+        if THREADS_MORNING[0] <= dt.hour < THREADS_MORNING[1]:
+            morning.append((dt, item, text))
+        elif THREADS_NIGHT[0] <= dt.hour < THREADS_NIGHT[1]:
+            night.append((dt, item, text))
+        # 昼(11〜19時)はどちらにも入れない＝絶対に選ばない
+
+    bucket = morning or night  # 朝を最優先、無ければ夜
+    if not bucket:
+        print("今日の朝・夜の投稿が見つかりません（昼は選ばない）", file=sys.stderr)
         return None
+    dt, root, _ = min(bucket, key=lambda x: x[0])  # その時間帯の先頭(root)投稿
+    root_id = root.get("id")
+
+    # 連投(ツリー)なら続き(自分の返信)を conversation から取得して結合。
+    # me/threads は自分の返信を返さないため、別エンドポイントが必要。
+    full_text = (root.get("text") or "").strip()
+    cont = fetch_thread_continuation(root_id)
+    if cont:
+        full_text = "\n\n".join([full_text] + cont)
+        print(f"朝の投稿はツリー → 本投稿＋続き{len(cont)}件を結合")
+
+    secs = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
+    hours = f"{int(secs // 3600)}時間" if secs >= 3600 else f"{int(secs // 60)}分"
+    return {"text": full_text, "topic": root.get("topic_tag") or "",
+            "hours": hours, "permalink": root.get("permalink", "")}
+
+
+# ── スキップ通知の同日重複防止 ─────────────────────────────────
+# 投稿が無い日は 8:00/8:30/9:00 の各cronが毎回ℹ️を送ってLINE枠を浪費するため、
+# 「本日スキップ通知済み」を last_post_threads.json に記録して初回のみ通知する。
+def _skip_notified_today() -> bool:
     try:
-        r = requests.get(f"{THREADS_API}/me/threads", params={
-            "fields": "id,text,timestamp,permalink,topic_tag,is_reply,root_post",
-            "limit": 25,
-            "access_token": THREADS_TOKEN,
-        }, timeout=20)
-        r.raise_for_status()
-        items = r.json().get("data", [])
-        today = datetime.now(JST).date()
-        morning, night = [], []
-        for item in items:
-            if item.get("is_reply"):
-                continue  # 連投の2部目以降は「先頭(root)」の候補にしない
-            text = (item.get("text") or "").strip()
-            if not text:
-                continue
-            try:
-                dt = datetime.fromisoformat(
-                    item.get("timestamp", "").replace("Z", "+00:00")).astimezone(JST)
-            except Exception:
-                continue
-            if dt.date() != today:
-                continue
-            if THREADS_MORNING[0] <= dt.hour < THREADS_MORNING[1]:
-                morning.append((dt, item, text))
-            elif THREADS_NIGHT[0] <= dt.hour < THREADS_NIGHT[1]:
-                night.append((dt, item, text))
-            # 昼(11〜19時)はどちらにも入れない＝絶対に選ばない
+        if os.path.exists(LAST_POST_THREADS_FILE):
+            with open(LAST_POST_THREADS_FILE, encoding="utf-8") as f:
+                d = json.load(f)
+            return d.get("skip_date") == datetime.now(JST).date().isoformat()
+    except Exception:
+        pass
+    return False
 
-        bucket = morning or night  # 朝を最優先、無ければ夜
-        if not bucket:
-            print("今日の朝・夜の投稿が見つかりません（昼は選ばない）", file=sys.stderr)
-            return None
-        dt, root, _ = min(bucket, key=lambda x: x[0])  # その時間帯の先頭(root)投稿
-        root_id = root.get("id")
 
-        # 連投(ツリー)なら続き(自分の返信)を conversation から取得して結合。
-        # me/threads は自分の返信を返さないため、別エンドポイントが必要。
-        full_text = (root.get("text") or "").strip()
-        cont = fetch_thread_continuation(root_id)
-        if cont:
-            full_text = "\n\n".join([full_text] + cont)
-            print(f"朝の投稿はツリー → 本投稿＋続き{len(cont)}件を結合")
-
-        secs = (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds()
-        hours = f"{int(secs // 3600)}時間" if secs >= 3600 else f"{int(secs // 60)}分"
-        return {"text": full_text, "topic": root.get("topic_tag") or "",
-                "hours": hours, "permalink": root.get("permalink", "")}
+def _mark_skip_notified() -> None:
+    try:
+        d = {}
+        if os.path.exists(LAST_POST_THREADS_FILE):
+            with open(LAST_POST_THREADS_FILE, encoding="utf-8") as f:
+                d = json.load(f)
+        d["skip_date"] = datetime.now(JST).date().isoformat()
+        tmp = LAST_POST_THREADS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, LAST_POST_THREADS_FILE)
     except Exception as e:
-        print(f"Threads投稿取得失敗: {e}", file=sys.stderr)
-        return None
+        print(f"skipマーカー保存失敗: {e}", file=sys.stderr)
 
 
 def get_threads_avatar() -> bytes | None:
@@ -230,9 +256,19 @@ def run_threads_story() -> None:
         print("本日のThreadsストーリーは投稿済みのためスキップ。")
         return
 
-    post = get_threads_latest_post()
+    try:
+        post = get_threads_latest_post()
+    except Exception as e:
+        # トークン失効・API障害を「投稿なし」と混同しない（沈黙のまま止まるのを防ぐ）
+        print(f"Threads投稿取得失敗: {e}", file=sys.stderr)
+        notify(f"⚠️ @bemolle_diet Threadsストーリー：Threads投稿の取得に失敗しました（トークン失効の可能性）\n{str(e)[:200]}")
+        sys.exit(1)
     if not post:
+        if _skip_notified_today():
+            print("朝の投稿なし→スキップ（本日の通知は送信済み）")
+            return
         notify("ℹ️ @bemolle_diet Threadsストーリー：今朝の投稿が見つからずスキップしました")
+        _mark_skip_notified()
         print("朝の投稿なし→スキップ")
         return
     print(f"対象Threads投稿（{post.get('hours')}）: {post['text'][:40]}…")
