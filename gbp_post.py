@@ -197,16 +197,20 @@ def generate_text(theme: dict, recent_texts: list) -> str:
 def post_via_make(body: str) -> bool:
     """MakeのWebhookに本文を送り、Make側のGBP「Create a Post」で自動投稿する。
     Makeが承認済みGBP API権限を持つため、こちらでのAPI申請は不要。
+    Make側シナリオ末尾のWebhook responseモジュールが、GBP投稿完了「後」に
+    「posted」を返す（2026-07-11設定）。かつての「accepted」は受理確認にすぎず
+    Make側の失敗を検知できなかったため、postedのみを成功として扱う。
     Webhook未設定・失敗時は False（→従来のLINE貼るだけ運用にフォールバック）。"""
     if not MAKE_GBP_WEBHOOK:
         return False
     import requests
     try:
-        r = requests.post(MAKE_GBP_WEBHOOK, json={"summary": body}, timeout=20)
-        if r.ok and r.text.strip().lower().startswith("accepted"):
-            print("Make Webhook 送信OK → GBP自動投稿へ")
+        # GBP投稿完了まで待ってから応答が返るため、タイムアウトは長めに取る
+        r = requests.post(MAKE_GBP_WEBHOOK, json={"summary": body}, timeout=90)
+        if r.ok and r.text.strip().lower().startswith("posted"):
+            print("Make Webhook: GBP投稿完了の応答を確認")
             return True
-        print(f"Make Webhook 応答異常: {r.status_code} {r.text[:100]}", file=sys.stderr)
+        print(f"Make Webhook 応答異常（投稿失敗の可能性）: {r.status_code} {r.text[:100]}", file=sys.stderr)
         return False
     except Exception as e:
         print(f"Make Webhook 送信失敗: {e}", file=sys.stderr)
@@ -256,30 +260,9 @@ def main() -> None:
 
     # LINE通知は「失敗時（＝手動対応が必要な時）だけ」送る運用。
     # Make経由で自動投稿できた場合は成功通知を出さない（通知は本当に対応が要る時だけ届く）。
-    sanity_month = state.get("sanity_month", "")
     if auto_posted:
+        # 「posted」応答＝Make側でGBP投稿まで完了済み。通知は失敗時だけ送る運用
         print("Make経由でGBP自動投稿 完了（成功通知は送らない設定）")
-        # Makeの「accepted」は受理確認にすぎず、GBPへの実投稿成功の保証ではない
-        # （実投稿結果のAPIはMake側にしか無く、こちらから照会できない）。
-        # Make側のトークン失効等で沈黙したまま輪番だけ進む事故を防ぐため、
-        # 月1回だけ実掲載の目視確認をLINEで依頼する（枠消費は月1通のみ）
-        if sanity_month != today_str[:7]:
-            try:
-                send_line([{
-                    "type": "text",
-                    "text": (
-                        "📋 GBP自動投稿の月1確認\n"
-                        "今月も自動投稿が動いています。ただしMakeの「受理」は掲載成功の保証ではないので、"
-                        "月に一度だけ実物を確認してください。\n\n"
-                        "Googleマップで「ベモーレ」→ プロフィールの「最新情報」に"
-                        "直近1週間の投稿があればOKです。\n"
-                        f"（今日の投稿テーマ：{theme['label']}）\n"
-                        "※この確認依頼は月1回だけ届きます"
-                    ),
-                }])
-                sanity_month = today_str[:7]
-            except Exception as e:
-                print(f"月1確認通知の送信失敗（投稿処理自体は完了）: {e}", file=sys.stderr)
     else:
         # 自動投稿できなかった＝人が貼り付ける必要がある → この時だけLINEに送る。
         # 注意: タイムアウト/応答喪失ではMake側は受理済み＝投稿される可能性があるため、
@@ -307,7 +290,6 @@ def main() -> None:
             "last_was_faq": is_faq,
             "recent_texts": recent,
             "last_date": today_str,
-            "sanity_month": sanity_month,
         })
     except Exception as e:
         print(f"状態保存に失敗（投稿自体は完了済み）: {e}", file=sys.stderr)
