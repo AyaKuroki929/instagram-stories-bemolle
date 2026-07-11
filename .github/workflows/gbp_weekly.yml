@@ -69,7 +69,7 @@ jobs:
           fi
 
       - name: Notify on workflow failure
-        if: failure()
+        if: failure() || cancelled()  # timeout超過はcancelled扱いでfailure()に掛からない（実機検証済み）
         run: |
           # Python側が🚨/⚠️を送信済みなら重複送信しない（LINE枠節約）
           if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
