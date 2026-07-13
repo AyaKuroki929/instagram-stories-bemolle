@@ -1,0 +1,14 @@
+[
+  {
+    "name": "公庫引き落とし",
+    "type": "monthly",
+    "day": 27,
+    "message": "【リマインド】💰\n日本政策金融公庫の引き落とし（月末最終営業日）が近づいています。\n\n銀行口座の残高を確認して、不足していれば入金してください✅"
+  },
+  {
+    "name": "ElevenLabs継続確認",
+    "type": "once",
+    "date": "2026-08-05",
+    "message": "【リマインド】🎙️\nElevenLabs（声クローン）の次回課金が8月8日にあります（月$6.60）。\n\n継続するか解約するか、今日決めましょう✅\n解約する場合：elevenlabs.io にログイン → Settings → Subscription → Cancel subscription\n（8月7日までに解約すれば追加課金なし・期間末まで使えます）"
+  }
+]

@@ -1,0 +1,64 @@
+name: Personal Reminder (Claude通知Bot)
+
+on:
+  schedule:
+    - cron: "0 0 * * *"   # 毎日 9:00 JST
+    - cron: "40 0 * * *"  # 保険（9:40 JST）。送信済みは reminder_state.json で重複防止
+  workflow_dispatch:       # 手動実行（テストは DRY_RUN で）
+
+permissions:
+  contents: write  # reminder_state.json を main にプッシュするため
+
+# 2つのcronが重なっても同時実行しない（状態ファイルの競合防止）
+concurrency:
+  group: personal-reminder
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      # ref: main を明示（concurrencyキュー待ちの間にpushされた送信済み記録を見落とさない）
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install anthropic requests
+
+      - name: Send due reminders
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: python personal_reminder.py
+
+      - name: Save sent state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add reminder_state.json 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: update reminder state [skip ci]"
+          # push失敗＝送信済み記録が消え、保険cronで同じリマインドが2通届く → リトライ
+          ok=""
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push; then ok=1; break; fi
+            echo "push失敗 ($i/3) → リトライ"; sleep $((i*5))
+          done
+          if [ -z "$ok" ]; then
+            echo "::error::push failed after retries"
+            exit 1
+          fi
+
+      - name: Notify on workflow failure
+        if: failure() || cancelled()
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 個人リマインダーworkflowが失敗しました。今日のリマインド（公庫引き落とし等）が届いていない可能性があります。GitHub Actionsのログを確認してください。"}]}'
