@@ -122,6 +122,29 @@ def upload_blob(data: bytes, ext: str, content_type: str) -> str:
     return url
 
 
+def delete_blobs(urls: list) -> None:
+    """投稿完了後の後片付け（ベストエフォート）。Blobは投稿処理の一時置き場で、
+    Metaが動画を取り込んだ後は不要。残すとストレージに溜まり続けるため削除する。
+    削除失敗は投稿の成否に影響しないのでログのみ（総点検①指摘の対応・2026-07-13）。"""
+    try:
+        r = requests.post(
+            "https://vercel.com/api/blob/delete",
+            headers={
+                "authorization": f"Bearer {BLOB_TOKEN}",
+                "x-api-version": "12",
+                "content-type": "application/json",
+            },
+            json={"urls": urls},
+            timeout=30,
+        )
+        if r.ok:
+            print(f"Blob後片付け完了（{len(urls)}件）")
+        else:
+            print(f"Blob削除失敗（投稿には影響なし）: {r.status_code} {r.text[:150]}", file=sys.stderr)
+    except Exception as e:
+        print(f"Blob削除エラー（投稿には影響なし）: {e}", file=sys.stderr)
+
+
 # ── Instagram Reels 投稿 ──────────────────────────────────────
 def post_reel(video_url: str, cover_url: str, caption: str) -> str:
     r = requests.post(f"{META_API}/{IG_USER_ID}/media", data={
@@ -219,6 +242,8 @@ def main() -> None:
     media_id = post_reel(video_url, cover_url, caption)
     permalink = get_permalink(media_id)
     print(f"投稿完了: media_id={media_id} {permalink}")
+
+    delete_blobs([video_url, cover_url])
 
     # ここから先はリール公開「後」の後処理。失敗しても「投稿失敗」と誤通知せず、
     # 二重投稿の危険（キュー未移動）を正しく伝える。

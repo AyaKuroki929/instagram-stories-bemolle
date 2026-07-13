@@ -37,7 +37,7 @@ def main() -> None:
     q = FILENAME.replace("'", "\\'")
     r = requests.get("https://www.googleapis.com/drive/v3/files", headers=h, params={
         "q": f"name='{q}' and trashed=false",
-        "fields": "files(id,name,size,parents)",
+        "fields": "files(id,name,size,parents,mimeType)",
     }, timeout=15)
     r.raise_for_status()
     files = r.json().get("files", [])
@@ -46,7 +46,8 @@ def main() -> None:
     if len(files) > 1:
         print(f"⚠️ 同名ファイルが{len(files)}件。先頭を使用: {files[0]['id']}")
     fid = files[0]["id"]
-    print(f"対象: {FILENAME} (id={fid}, 現行サイズ={files[0].get('size','?')})")
+    mime = files[0].get("mimeType") or "application/octet-stream"
+    print(f"対象: {FILENAME} (id={fid}, 現行サイズ={files[0].get('size','?')}, mime={mime})")
 
     # 2. 版の一覧
     r = requests.get(f"https://www.googleapis.com/drive/v3/files/{fid}/revisions",
@@ -72,7 +73,7 @@ def main() -> None:
     # 4. 現行版として書き戻し
     r = requests.patch(
         f"https://www.googleapis.com/upload/drive/v3/files/{fid}?uploadType=media",
-        headers={**h, "Content-Type": "video/mp4"}, data=data, timeout=600)
+        headers={**h, "Content-Type": mime}, data=data, timeout=600)  # 実ファイルの形式を使う（mp4固定だと画像等の復元でmimeが壊れる）
     if not r.ok:
         raise Exception(f"書き戻し失敗: {r.status_code} {r.text[:300]}")
     print(f"✅ 復元完了: {FILENAME} を {target['modifiedTime']} の版に戻しました")
