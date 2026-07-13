@@ -9,9 +9,9 @@ on:
         required: true
         type: string
       revision_index:
-        description: '戻す版のindex（0=最古）'
+        description: '戻す版のindex（未指定=最古のまともな版。1KB未満の同期ゴミ版は自動スキップ）'
         required: false
-        default: '0'
+        default: ''
         type: string
 
 jobs:
