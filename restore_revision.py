@@ -16,7 +16,8 @@ import sys
 import requests
 
 FILENAME = os.environ["RESTORE_FILENAME"]
-REV_INDEX = int(os.environ.get("RESTORE_REVISION_INDEX", "0"))
+_idx_raw = os.environ.get("RESTORE_REVISION_INDEX", "").strip()
+REV_INDEX = int(_idx_raw) if _idx_raw else None  # None=最古のまともな版を自動選択
 
 
 def token() -> str:
@@ -63,7 +64,7 @@ def main() -> None:
     # 「最古の版」を機械的に選ぶとこのゴミを掴んで実データを48バイトで上書きする
     # 事故が起きた（2026-07-13 C0342/C0343）。1KB未満の版は選択対象から除外する。
     MIN_REAL_SIZE = 1024
-    if os.environ.get("RESTORE_REVISION_INDEX", "") == "":
+    if REV_INDEX is None:
         real = [i for i, rv in enumerate(revs) if int(rv.get("size", "0") or 0) >= MIN_REAL_SIZE]
         if not real:
             raise Exception("1KB以上のまともな版がありません")
