@@ -65,11 +65,19 @@ def main() -> None:
     # 事故が起きた（2026-07-13 C0342/C0343）。1KB未満の版は選択対象から除外する。
     MIN_REAL_SIZE = 1024
     if REV_INDEX is None:
-        real = [i for i, rv in enumerate(revs) if int(rv.get("size", "0") or 0) >= MIN_REAL_SIZE]
+        # Drive同期は1回のアップロードで「48バイトのプレースホルダー→部分チャンク→完成形」
+        # と複数の版を残す（部分チャンクはmoov欠落で再生不能）。よって「最初のアップロード
+        # バースト（先頭の版から10分以内）のうち最大サイズの版」を原本として選ぶ。
+        from datetime import datetime, timedelta
+        def ts(rv):
+            return datetime.fromisoformat(rv["modifiedTime"].replace("Z", "+00:00"))
+        first_time = ts(revs[0])
+        burst = [i for i, rv in enumerate(revs) if ts(rv) - first_time <= timedelta(minutes=10)]
+        real = [i for i in burst if int(revs[i].get("size", "0") or 0) >= MIN_REAL_SIZE]
         if not real:
-            raise Exception("1KB以上のまともな版がありません")
-        idx = real[0]
-        print(f"→ index未指定のため最古のまともな版[{idx}]を自動選択（1KB未満のゴミ版はスキップ）")
+            raise Exception("最初のアップロードバーストにまともな版がありません")
+        idx = max(real, key=lambda i: int(revs[i].get("size", "0") or 0))
+        print(f"→ index未指定のため、最初のアップロードバースト内で最大の版[{idx}]を自動選択")
     else:
         idx = REV_INDEX
     target = revs[idx]
