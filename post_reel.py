@@ -264,7 +264,9 @@ def main() -> None:
                    "Driveの「リール/投稿キュー」から手で「投稿済み」へ移動してください。")
             return
         print("キューのファイルを「投稿済み」へ移動しました")
-        notify(f"🎬 リール投稿が完了しました！\n{video['name']}\n{permalink or '(URL取得なし)'}")
+        # 成功時のLINE通知は送らない（2026-07-14彩さん指示：投稿はチャット画面で見ているため不要。
+        # 警告・失敗系のみLINEに残す＝PCを閉じている時の保険）
+        print(f"🎬 リール投稿が完了しました: {video['name']} {permalink or '(URL取得なし)'}")
     except Exception as e:
         print(f"後処理エラー（投稿自体は成功済み）: {e}", file=sys.stderr)
         notify("⚠️ リール投稿は成功しましたが、後処理でエラーが発生しました\n"
