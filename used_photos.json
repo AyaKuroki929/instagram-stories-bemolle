@@ -1,9 +1,4 @@
 {
-  "1rxGP4BT_u62Vdhb2QebDlzouSncsdRhg": {
-    "ts": "2026-07-01T07:01:28.477836+09:00",
-    "hash": "ffffef2423a03098",
-    "series": "dsc"
-  },
   "1YgyoqTlYEBd-mH6RJq85ENVhqQiKstQS": {
     "ts": "2026-07-02T07:01:26.820723+09:00",
     "hash": "e7e7f7e3c1e3e3e0",
@@ -68,5 +63,10 @@
     "ts": "2026-07-14T07:01:39.449955+09:00",
     "hash": "f9f9c181e1018585",
     "series": "20250112-"
+  },
+  "1rxGP4BT_u62Vdhb2QebDlzouSncsdRhg": {
+    "ts": "2026-07-15T07:01:43.332365+09:00",
+    "hash": "ffffef2423a03098",
+    "series": "dsc"
   }
 }
