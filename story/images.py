@@ -231,7 +231,7 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
             cur = ""
             for cl in clauses:
                 trial = cur + cl
-                disp = trial[:-1] if trial.endswith("、") else trial
+                disp = trial.strip("、")  # 行頭・行末の読点はすべて非表示扱い
                 if cur and disp_w(disp) > max_w:
                     groups.append(cur)
                     cur = cl
@@ -240,8 +240,8 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
             if cur:
                 groups.append(cur)
             for g in groups:
+                disp = g.strip("、")  # 行頭・行末の読点はすべて非表示
                 had_comma = g.endswith("、")
-                disp = g[:-1] if had_comma else g
                 if not disp:
                     continue  # 読点のみの縮退句は表示しない
                 if disp_w(disp) <= max_w:
