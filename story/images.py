@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from datetime import datetime
 from io import BytesIO
@@ -110,66 +111,69 @@ def build_image(content: dict, today: datetime) -> bytes:
     draw = ImageDraw.Draw(img)
 
     def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
+        """日本語の折り返し（禁則処理つき）。
+        方針：
+        - 句点「。」で文を区切り、各文を幅に収まるよう貪欲に折り返す
+        - 改行の前に「、」を置かない（行末に読点を残さない）
+        - 行頭に「、。」」等の約物を置かない
+        - 助詞（を・に・が・は・へ・も・と・で）の直後で改行。ただし助詞の直前が
+          漢字/カタカナ（＝内容語末）のときだけ本物の助詞とみなし、語中割れを防ぐ
+          （例：皆様が→OK、ありがとう→NG。「できる」「です」等はで＋き/し/す等で除外）
+        - 短すぎる先頭/末尾行は避け、末尾の極短行は前行にマージ
         """
-        1. 句点。の後は必ず改行。読点、の後も改行するが、直前が短すぎる時は見送る
-        2. 行が40%を超えたら助詞（で・に・を・が・は・と）の後を潜在的な改行点として記録
-        3. max_w 超過時に、残り4文字以上になる助詞位置で折り返し
-           残りが3文字以下になる場合は折り返しを見送り、次の区切りまで待つ（「ね。」「す。」防止）
-        4. 助詞が無くハードカットする場合、行末に残る接頭辞お/ごは次行へ送る（「お声」を割らない）
-        """
-        HARD = frozenset("。、")
-        SOFT = frozenset("にをがはとり")  # 「で」は複合語除外。「り」はゆっくり・しっかり等の語末で自然な折り返し点
-        PREFIX = frozenset("おご")  # 「お声」「ご来店」を語中で割らないための接頭辞
-        half_w = max_w * 0.40
-        MIN_REMAIN = 4
+        HEAD_NG = "、。」』）)！？!?…・%％"   # 行頭に置かない約物
+        PART = "をにがはへもとで"              # 改行してよい助詞
+        MIN_BREAK, MIN_TAIL = 5, 4
 
-        lines, line, soft_line = [], "", None
+        def is_content(c: str) -> bool:        # 漢字/カタカナ/々（助詞の直前らしさ）
+            o = ord(c)
+            return 0x4E00 <= o <= 0x9FFF or 0x30A0 <= o <= 0x30FF or o == 0x3005
 
-        for ch in text:
-            line += ch
-            w = font.getbbox(line)[2]
+        def fits(s: str) -> bool:
+            return font.getbbox(s)[2] <= max_w
 
-            if ch in HARD:
-                # 読点、で区切ると短すぎる場合は改行せず続け、「先週、」単独行を防ぐ
-                if ch == "、" and len(line) < MIN_REMAIN:
-                    continue
-                lines.append(line)
-                line = ""
-                soft_line = None
-                continue
+        def good(sent: str, k: int, n: int) -> bool:
+            prev = sent[k - 1]
+            nxt = sent[k] if k < n else ""
+            if prev == "、" or nxt in HEAD_NG:
+                return False
+            if prev == "で" and nxt in "きしすさせ":   # できる/です/でした等の語中を除外
+                return False
+            return prev in PART and k >= 2 and is_content(sent[k - 2])
 
-            # オーバーフロー検査を soft_line 更新より先に実行
-            if w > max_w and len(line) > 1:
-                if soft_line and len(soft_line) < len(line):
-                    remaining = line[len(soft_line):]
-                    if len(remaining) >= MIN_REMAIN:
-                        lines.append(soft_line)
-                        line = remaining
-                        soft_line = None
-                        continue  # soft_line 更新スキップ
-                    # 残りが短すぎ → はみ出し許容（soft_line 更新もスキップ）
-                else:
-                    head, tail = line[:-1], ch
-                    # 行末に残る接頭辞お/ごは次行へ送り、「お声」等を割らない
-                    if len(head) > 1 and head[-1] in PREFIX:
-                        head, tail = head[:-1], head[-1] + tail
-                    lines.append(head)
-                    line = tail
-                    soft_line = None
-                continue  # オーバーフロー後は soft_line を更新しない
+        def any_break(sent: str, k: int, n: int) -> bool:
+            prev = sent[k - 1]
+            nxt = sent[k] if k < n else ""
+            return prev != "、" and nxt not in HEAD_NG
 
-            # オーバーフローなしのときだけ soft_line を更新
-            if ch in SOFT and w >= half_w:
-                soft_line = line
+        lines: list[str] = []
+        for para in text.split("\n"):
+            for sent in re.findall(r"[^。]*。|[^。]+", para):
+                i, n = 0, len(sent)
+                while i < n:
+                    j = i + 1
+                    while j <= n and fits(sent[i:j]):
+                        j += 1
+                    j -= 1
+                    if j >= n:                       # 残り全部が収まる
+                        lines.append(sent[i:])
+                        break
+                    j = max(j, i + 1)
+                    # 1) 助詞の自然な区切りで、短すぎない最大位置
+                    k = next((x for x in range(j, i, -1)
+                              if good(sent, x, n) and x - i >= MIN_BREAK), None)
+                    # 2) 無ければ、行末読点/行頭約物だけ避けた最大位置
+                    if k is None:
+                        k = next((x for x in range(j, i, -1) if any_break(sent, x, n)), None)
+                    if not k or k <= i:
+                        k = j
+                    lines.append(sent[i:k])
+                    i = k
 
-        if line:
-            lines.append(line)
-
-        # 短すぎる末尾行（MIN_REMAIN未満）を前行にマージ（「す。」「ね。」防止）
-        # ただし前行が句点。で完結している場合は文をまたいで繋げない（句点での改行を守る）
-        merged = []
+        # 末尾の極短行を前行にマージ（句点で完結した行はまたがない）
+        merged: list[str] = []
         for ln in lines:
-            if merged and len(ln) < MIN_REMAIN and not merged[-1].endswith("。"):
+            if merged and len(ln) < MIN_TAIL and not merged[-1].endswith("。"):
                 merged[-1] = merged[-1] + ln
             else:
                 merged.append(ln)
