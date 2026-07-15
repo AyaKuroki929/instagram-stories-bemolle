@@ -98,11 +98,16 @@ def _break_penalty(s: str, k: int) -> float:
 def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
     """日本語の折り返し（BudouX文節境界＋禁則＋行長バランスDP最適化）。
 
+    スタイル（2026-07-15 黒木指定）：
+      ・読点「、」の位置を最優先の改行点にし、行末に来る「、」は表示しない（詩の句切り風）
+        例: 「ベモーレでお会いした時／皆様が…／空間でいられることが／私たちの誇りです。」
+      ・短い読点句同士は1行に収まるならまとめる（読点は行中に残る）
+      ・1句が1行に収まらない時だけ、句の中をBudouX文節境界＋バランスDPで折る
     保証（通常の日本語短文入力に対して）：
       ・行末に「、」を残さない／行頭に約物・小書き仮名・長音・ん を置かない
-      ・語中割れをしない（改行候補はBudouXの文節境界のみ。私たち/との/ともに/向き合う等も保持）
+      ・語中割れをしない（私たち/との/ともに/向き合う等も保持）
       ・句点「。」で必ず改行し、文をまたいだ行を作らない
-      ・結合結果は元テキストから改行を除いたものと一致（空段落は保持しない）
+      ・結合結果は「行末で非表示にした読点」を除き元テキストと一致（空段落は保持しない）
     縮退入力（1文節が1行に収まらない長大語等）では、禁則より
     「必ず描画できること」を優先して緊急ハードカットする。
     """
@@ -199,7 +204,7 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
                     if best[0] < INF:
                         dp[(b, l)] = best
             if (n, trial_L) in dp:
-                cost = dp[(n, trial_L)][0] + 2.0 * (trial_L - L)  # 行数増はわずかに抑制
+                cost = dp[(n, trial_L)][0] + 30.0 * (trial_L - L)  # 行数増を強く抑制（バランス目的の不要な行増を防ぐ。緊急回避10000級の時だけL+1が勝つ）
                 cuts, b, l = [], n, trial_L
                 while l > 0:
                     cuts.append(b)
@@ -212,20 +217,50 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
             return _cuts_to_lines(sent, best_sol[1])
         return _cuts_to_lines(sent, g_cuts)  # 合法候補では組めない（長大語など）→ 緊急カット込みの貪欲
 
+    def disp_w(s: str) -> float:
+        return font.getlength(s) if s else 0.0
+
     out: list[str] = []
     for para in text.split("\n"):
-        lines: list[str] = []
+        # (表示文字列, 行末で読点を非表示にしたか) のリスト
+        lines: list[tuple[str, bool]] = []
         for sent in re.findall(r"[^。]*。|[^。]+", para):
-            lines.extend(wrap_sentence(sent))
-        # 末尾の極短行を前行にマージ（段落内のみ・幅を超えない場合のみ・句点行はまたがない）
-        merged: list[str] = []
-        for ln in lines:
-            if (merged and len(ln) < 4 and not merged[-1].endswith("。")
-                    and font.getlength(merged[-1] + ln) <= max_w):
-                merged[-1] = merged[-1] + ln
-            else:
-                merged.append(ln)
-        out.extend(merged)
+            # 読点で句に分割（、は句末に保持）→ 収まる限り句をまとめてグループ化
+            clauses = re.findall(r"[^、]*、|[^、]+", sent)
+            groups: list[str] = []
+            cur = ""
+            for cl in clauses:
+                trial = cur + cl
+                disp = trial[:-1] if trial.endswith("、") else trial
+                if cur and disp_w(disp) > max_w:
+                    groups.append(cur)
+                    cur = cl
+                else:
+                    cur = trial
+            if cur:
+                groups.append(cur)
+            for g in groups:
+                had_comma = g.endswith("、")
+                disp = g[:-1] if had_comma else g
+                if not disp:
+                    continue  # 読点のみの縮退句は表示しない
+                if disp_w(disp) <= max_w:
+                    lines.append((disp, had_comma))
+                else:
+                    segs = wrap_sentence(disp)  # 1句が長い→句内をBudouX＋DPで折る
+                    for i3, s3 in enumerate(segs):
+                        lines.append((s3, had_comma if i3 == len(segs) - 1 else False))
+        # 末尾の極短行を前行にマージ（非表示にした読点は復元して結合・幅と句点をチェック）
+        merged: list[tuple[str, bool]] = []
+        for disp, had in lines:
+            if merged and len(disp) < 4 and not merged[-1][0].endswith("。"):
+                pd, ph = merged[-1]
+                cand = pd + ("、" if ph else "") + disp
+                if disp_w(cand) <= max_w:
+                    merged[-1] = (cand, had)
+                    continue
+            merged.append((disp, had))
+        out.extend(d for d, _ in merged)
     return out
 
 
