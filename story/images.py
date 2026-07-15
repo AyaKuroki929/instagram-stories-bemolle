@@ -145,7 +145,12 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
                 continue
             if k in budoux_bounds:
                 # が/は/も/と は後続の述部と結び付きが強いので を/に/で/へ よりわずかに劣後
-                pen[k] = 0.5 if sent[k - 1] in "がはもと" else 0.0
+                p = 0.5 if sent[k - 1] in "がはもと" else 0.0
+                # 形式名詞（とき/こと/もの等）は直前の節と一体。その直前では折らない
+                # （「お帰りになられる｜とき」を避け「〜ときの｜穏やかなお顔」を選ばせる）
+                if sent[k:k + 2] in ("とき", "こと", "もの", "ため", "ほう", "まま", "とこ"):
+                    p += 10.0
+                pen[k] = p
             elif _BUDOUX is not None:
                 pen[k] = 10000.0  # 文節境界でない位置は緊急時のみ
             else:
