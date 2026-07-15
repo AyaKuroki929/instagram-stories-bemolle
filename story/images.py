@@ -12,6 +12,12 @@ from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+try:
+    from budoux import load_default_japanese_parser
+    _BUDOUX = load_default_japanese_parser()  # 日本語文節境界（Google製・純Python）
+except Exception:
+    _BUDOUX = None  # 未導入でもヒューリスティックで動く
+
 from .config import FONT_PATHS
 from .photos import detect_faces, get_drive_photo, load_fallback_photo
 
@@ -21,6 +27,214 @@ def get_font(size: int) -> ImageFont.FreeTypeFont:
         if os.path.exists(path):
             return ImageFont.truetype(path, size)
     return ImageFont.load_default()
+
+
+# ── 日本語折り返し（禁則＋行長バランス最適化）──────────────────────
+# 行頭に置かない文字（約物＋小書き仮名＋長音＋撥音。ん は語頭に来ない＝直前で切ると語中割れ）
+_HEAD_NG = frozenset("、。」』）)！？!?…・%％ーんっゃゅょゎぁぃぅぇぉッャュョヮァィゥェォ")
+_PART = frozenset("をにがはへもとで")  # 折り返してよい助詞
+
+
+def _is_kanji(c: str) -> bool:
+    o = ord(c)
+    return 0x4E00 <= o <= 0x9FFF or o == 0x3005
+
+
+def _is_kata(c: str) -> bool:
+    return 0x30A0 <= ord(c) <= 0x30FF
+
+
+def _is_hira(c: str) -> bool:
+    return 0x3040 <= ord(c) <= 0x309F
+
+
+def _is_content(c: str) -> bool:  # 内容語らしい文字（漢字/カタカナ）
+    return _is_kanji(c) or _is_kata(c)
+
+
+def _hard_ok(s: str, k: int) -> bool:
+    """位置k（s[k-1]とs[k]の間）で改行してよいか＝絶対禁則。"""
+    prev, nxt = s[k - 1], s[k] if k < len(s) else ""
+    if prev == "、":                       # 行末に読点を残さない（ユーザールール）
+        return False
+    if nxt and nxt in _HEAD_NG:            # 行頭禁則
+        return False
+    if prev == "で" and nxt in "きしすさせ":  # できる/です/でした 等の語中
+        return False
+    if prev == "と" and s[k:k + 2] in (
+        "なる", "なっ", "なり", "いう", "いっ", "いい", "いわ", "いえ",
+        "して", "した", "しま", "すれ", "せず",
+    ):
+        return False                       # となる/という/として 等の複合のみ禁止（皆様と｜いつまでも は許可）
+    if prev in "おご" and nxt and _is_content(nxt):
+        return False                       # 敬語接頭辞を行末に残さない（お｜帰り・ご｜来店）
+    if _is_kata(prev) and nxt and _is_kata(nxt):  # カタカナ語の語中
+        return False
+    if prev.isascii() and prev.isalnum() and nxt and nxt.isascii() and nxt.isalnum():
+        return False                       # 英単語・数値列の語中（LINE/Instagram/2026等）
+    return True
+
+
+def _break_penalty(s: str, k: int) -> float:
+    """改行位置の不自然さペナルティ。_hard_ok前提。
+    語中割れ級(T2/T3)は行長偏差(最大でも数百)より桁違いに重くし、
+    バランスのために語中割れを選ばないことを実質保証する（辞書式優先）。"""
+    prev, nxt = s[k - 1], s[k] if k < len(s) else ""
+    prev2 = s[k - 2] if k >= 2 else ""
+    if prev == "を":
+        return 0.0                         # 「を」は現代語で常に助詞（ことを｜お待ち も自然）
+    if prev in _PART and prev2 and _is_content(prev2):
+        # 内容語＋助詞の直後。が/は/も/と は後続の述部との結び付きが強いので を/に/で/へ よりわずかに劣後
+        return 0.5 if prev in "がはもと" else 0.0
+    if s[k:k + 3] in ("ござい", "いただ", "くださ"):
+        return 4.0                         # 丁寧語の語境界（ありがとう｜ございました 等）
+    if _is_hira(prev) and nxt and _is_content(nxt):
+        return 4.0                         # ひらがな→漢字/カタカナ＝新しい語の頭（たちの｜誇り）
+    if _is_kanji(prev) and nxt and _is_kanji(nxt):
+        return 15000.0                     # 漢字熟語の分断（来｜店・空｜間）＝最悪
+    return 10000.0                         # ひらがな途中など＝語中割れの恐れ大
+
+
+def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
+    """日本語の折り返し（BudouX文節境界＋禁則＋行長バランスDP最適化）。
+
+    保証（通常の日本語短文入力に対して）：
+      ・行末に「、」を残さない／行頭に約物・小書き仮名・長音・ん を置かない
+      ・語中割れをしない（改行候補はBudouXの文節境界のみ。私たち/との/ともに/向き合う等も保持）
+      ・句点「。」で必ず改行し、文をまたいだ行を作らない
+      ・結合結果は元テキストから改行を除いたものと一致（空段落は保持しない）
+    縮退入力（1文節が1行に収まらない長大語等）では、禁則より
+    「必ず描画できること」を優先して緊急ハードカットする。
+    """
+    def wrap_sentence(sent: str) -> list[str]:
+        n = len(sent)
+        # 文字境界ごとの累積幅（CJKはカーニング無しなので差分で部分幅を得る。fontコール O(n)）
+        pref = [0.0] * (n + 1)
+        for i2 in range(1, n + 1):
+            pref[i2] = font.getlength(sent[:i2])
+
+        def width(a: int, b: int) -> float:
+            return pref[b] - pref[a]
+
+        if pref[n] <= max_w:
+            return [sent]
+        em = max(font.getlength("あ"), 1.0)
+
+        # 改行候補と各ペナルティ。主候補=BudouX文節境界（語中割れゼロ）、
+        # 予備=ヒューリスティック位置（境界不足時の緊急用・重ペナルティ）
+        pen: dict[int, float] = {}
+        budoux_bounds: set[int] = set()
+        if _BUDOUX is not None:
+            try:
+                chunks = _BUDOUX.parse(sent)
+            except Exception:
+                chunks = []
+            idx = 0
+            for ch in chunks[:-1]:
+                idx += len(ch)
+                if len(ch) < 2:
+                    continue  # 1文字チャンク（心から|く|つろいで 等のモデル癖）は次と結合
+                budoux_bounds.add(idx)
+        for k in range(1, n):
+            if not _hard_ok(sent, k):
+                continue
+            if k in budoux_bounds:
+                # が/は/も/と は後続の述部と結び付きが強いので を/に/で/へ よりわずかに劣後
+                pen[k] = 0.5 if sent[k - 1] in "がはもと" else 0.0
+            elif _BUDOUX is not None:
+                pen[k] = 10000.0  # 文節境界でない位置は緊急時のみ
+            else:
+                pen[k] = _break_penalty(sent, k)  # BudouX無し環境のフォールバック
+        cands = sorted(pen)
+
+        # 貪欲法：最小行数の目安（候補が無い区間は緊急ハードカット。行頭禁則だけは可能な限り避ける）
+        def greedy() -> list[int]:
+            cuts, i = [], 0
+            while i < n:
+                j = i + 1
+                while j <= n and width(i, j) <= max_w:
+                    j += 1
+                j -= 1
+                if j >= n:
+                    cuts.append(n)
+                    break
+                j = max(j, i + 1)
+                k = next((x for x in reversed(cands) if i < x <= j), None)
+                if k is None:
+                    k = j
+                    while k > i + 1 and sent[k] in _HEAD_NG:  # 緊急カットでも行頭禁則を極力回避
+                        k -= 1
+                cuts.append(k)
+                i = k
+            return cuts
+
+        g_cuts = greedy()
+        L = len(g_cuts)
+        if n > 150:
+            return _cuts_to_lines(sent, g_cuts)  # 長大入力はDPを省略（性能ガード）
+
+        # 合法候補でL〜L+2行の各最適解を作り、総コスト最小の行数を採用
+        # （L行では緊急位置が必要でも、L+1行なら文節境界だけで組める場合があるため）
+        pos = sorted(set([0] + cands + [n]))
+        INF = float("inf")
+        best_sol: tuple[float, list[int]] | None = None
+        for trial_L in (L, L + 1, L + 2):
+            target = pref[n] / trial_L
+            dp: dict[tuple[int, int], tuple[float, int]] = {(0, 0): (0.0, -1)}
+            for l in range(1, trial_L + 1):
+                for b in pos:
+                    if b == 0:
+                        continue
+                    best = (INF, -1)
+                    for a in pos:
+                        if a >= b or (a, l - 1) not in dp:
+                            continue
+                        w = width(a, b)
+                        if w > max_w:
+                            continue
+                        dev = ((w - target) / em) ** 2
+                        c = dp[(a, l - 1)][0] + dev + (0.0 if b == n else pen[b])
+                        if c < best[0]:
+                            best = (c, a)
+                    if best[0] < INF:
+                        dp[(b, l)] = best
+            if (n, trial_L) in dp:
+                cost = dp[(n, trial_L)][0] + 2.0 * (trial_L - L)  # 行数増はわずかに抑制
+                cuts, b, l = [], n, trial_L
+                while l > 0:
+                    cuts.append(b)
+                    b = dp[(b, l)][1]
+                    l -= 1
+                cuts.reverse()
+                if best_sol is None or cost < best_sol[0]:
+                    best_sol = (cost, cuts)
+        if best_sol is not None:
+            return _cuts_to_lines(sent, best_sol[1])
+        return _cuts_to_lines(sent, g_cuts)  # 合法候補では組めない（長大語など）→ 緊急カット込みの貪欲
+
+    out: list[str] = []
+    for para in text.split("\n"):
+        lines: list[str] = []
+        for sent in re.findall(r"[^。]*。|[^。]+", para):
+            lines.extend(wrap_sentence(sent))
+        # 末尾の極短行を前行にマージ（段落内のみ・幅を超えない場合のみ・句点行はまたがない）
+        merged: list[str] = []
+        for ln in lines:
+            if (merged and len(ln) < 4 and not merged[-1].endswith("。")
+                    and font.getlength(merged[-1] + ln) <= max_w):
+                merged[-1] = merged[-1] + ln
+            else:
+                merged.append(ln)
+        out.extend(merged)
+    return out
+
+
+def _cuts_to_lines(sent: str, cuts: list[int]) -> list[str]:
+    lines, prev = [], 0
+    for c in cuts:
+        lines.append(sent[prev:c])
+        prev = c
+    return lines
 
 
 def _photo_background(photo_bytes: bytes, W: int, H: int):
@@ -109,75 +323,6 @@ def build_image(content: dict, today: datetime) -> bytes:
         line_color = (200, 160, 160)
 
     draw = ImageDraw.Draw(img)
-
-    def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[str]:
-        """日本語の折り返し（禁則処理つき）。
-        方針：
-        - 句点「。」で文を区切り、各文を幅に収まるよう貪欲に折り返す
-        - 改行の前に「、」を置かない（行末に読点を残さない）
-        - 行頭に「、。」」等の約物を置かない
-        - 助詞（を・に・が・は・へ・も・と・で）の直後で改行。ただし助詞の直前が
-          漢字/カタカナ（＝内容語末）のときだけ本物の助詞とみなし、語中割れを防ぐ
-          （例：皆様が→OK、ありがとう→NG。「できる」「です」等はで＋き/し/す等で除外）
-        - 短すぎる先頭/末尾行は避け、末尾の極短行は前行にマージ
-        """
-        HEAD_NG = "、。」』）)！？!?…・%％"   # 行頭に置かない約物
-        PART = "をにがはへもとで"              # 改行してよい助詞
-        MIN_BREAK, MIN_TAIL = 5, 4
-
-        def is_content(c: str) -> bool:        # 漢字/カタカナ/々（助詞の直前らしさ）
-            o = ord(c)
-            return 0x4E00 <= o <= 0x9FFF or 0x30A0 <= o <= 0x30FF or o == 0x3005
-
-        def fits(s: str) -> bool:
-            return font.getbbox(s)[2] <= max_w
-
-        def good(sent: str, k: int, n: int) -> bool:
-            prev = sent[k - 1]
-            nxt = sent[k] if k < n else ""
-            if prev == "、" or nxt in HEAD_NG:
-                return False
-            if prev == "で" and nxt in "きしすさせ":   # できる/です/でした等の語中を除外
-                return False
-            return prev in PART and k >= 2 and is_content(sent[k - 2])
-
-        def any_break(sent: str, k: int, n: int) -> bool:
-            prev = sent[k - 1]
-            nxt = sent[k] if k < n else ""
-            return prev != "、" and nxt not in HEAD_NG
-
-        lines: list[str] = []
-        for para in text.split("\n"):
-            for sent in re.findall(r"[^。]*。|[^。]+", para):
-                i, n = 0, len(sent)
-                while i < n:
-                    j = i + 1
-                    while j <= n and fits(sent[i:j]):
-                        j += 1
-                    j -= 1
-                    if j >= n:                       # 残り全部が収まる
-                        lines.append(sent[i:])
-                        break
-                    j = max(j, i + 1)
-                    # 1) 助詞の自然な区切りで、短すぎない最大位置
-                    k = next((x for x in range(j, i, -1)
-                              if good(sent, x, n) and x - i >= MIN_BREAK), None)
-                    # 2) 無ければ、行末読点/行頭約物だけ避けた最大位置
-                    if k is None:
-                        k = next((x for x in range(j, i, -1) if any_break(sent, x, n)), None)
-                    if not k or k <= i:
-                        k = j
-                    lines.append(sent[i:k])
-                    i = k
-
-        # 末尾の極短行を前行にマージ（句点で完結した行はまたがない）
-        merged: list[str] = []
-        for ln in lines:
-            if merged and len(ln) < MIN_TAIL and not merged[-1].endswith("。"):
-                merged[-1] = merged[-1] + ln
-            else:
-                merged.append(ln)
-        return merged
 
     def draw_block(text: str, font: ImageFont.FreeTypeFont, color: tuple,
                    y: int, max_w: int) -> int:
