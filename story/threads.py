@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from .auth import manage_meta_token
 from .config import BLOB_TOKEN, JST, LAST_POST_THREADS_FILE, THREADS_API, THREADS_TOKEN
-from .images import get_font
+from .images import get_font, wrapped_lines
 from .notify import notify
 from .publisher import get_ig_user_id, post_to_stories, upload_image
 from .state import mark_posted_local, posted_today_local
@@ -187,41 +187,28 @@ def build_threads_image(post: dict, avatar_bytes: bytes | None) -> bytes:
     maxw, top, foot_y = W - PAD * 2, 330, H - 150
     avail = foot_y - top - 30
 
-    def wrap(text, font):
-        FORBID = "。、」』）)！？!?…"
-        out = []
-        for raw in text.split("\n"):
-            line = ""
-            for ch in raw:
-                if font.getbbox(line + ch)[2] <= maxw:
-                    line += ch
-                elif ch in FORBID and line:
-                    out.append(line + ch); line = ""
-                else:
-                    out.append(line); line = ch
-            out.append(line)
-        return out
-
     def layout(font, lh, pgap):
+        # 折り返しはサロン投稿と同じ wrapped_lines（BudouX文節境界＋禁則＋バランスDP）を使う。
+        # 旧実装は読点を行末にぶら下げており「改行の前に、を打たない」ルール違反だった。
         items, h = [], 0
         for seg in post["text"].split("\n"):
             if seg.strip() == "":
                 items.append(("gap", "", False)); h += pgap
             else:
                 is_link = any(k in seg for k in ("instagram.com", "http", "threads.net"))
-                for ln in wrap(seg, font):
+                for ln in wrapped_lines(seg, font, maxw):
                     items.append(("line", ln, is_link)); h += lh
         return items, h
 
     chosen = None
     for size in (40, 37, 34, 31, 28):
-        font = get_font(size); lh = int(size * 1.45); pgap = int(size * 0.55)
-        items, h = layout(font, lh, pgap)
+        font = get_font(size); lh = int(size * 1.45)
+        items, h = layout(font, lh, int(lh * 0.4))  # gapは描画時と同じ式（高さ見積りのズレ防止）
         if h <= avail:
             chosen = (font, lh, items); break
     if chosen is None:  # 最小でも収まらない→入る分だけ描いて末尾省略
         font = get_font(28); lh = int(28 * 1.45)
-        items, _ = layout(font, lh, int(28 * 0.55))
+        items, _ = layout(font, lh, int(lh * 0.4))
         keep = max(1, avail // lh - 1)
         items = items[:keep] + [("line", "…続きはThreadsで", False)]
         chosen = (font, lh, items)
