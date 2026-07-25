@@ -78,13 +78,14 @@ def _blob_state_host() -> str:
     return f"{store}.public.blob.vercel-storage.com"
 
 
-def _salon_marker_path() -> str:
+def _marker_path(kind: str = "salon") -> str:
     # 日付別の「不変」マーカー。毎日別パス＝上書きしない＝CDNの古い値を読む事故が起きない。
-    return f"salon-state/posted-{datetime.now(JST).date().isoformat()}.json"
+    # kind でサロン投稿(salon)とThreads→ストーリー(threads)を分離＝互いを数えない。
+    return f"{kind}-state/posted-{datetime.now(JST).date().isoformat()}.json"
 
 
-def blob_mark_posted() -> None:
-    """今日のサロン投稿済みを日付別マーカーとしてBlobに作成。3回失敗で例外。
+def blob_mark_posted(kind: str = "salon") -> None:
+    """今日の投稿済みを日付別マーカーとしてBlobに作成（kind別）。3回失敗で例外。
     トークン未設定＝二重投稿防止の主砦が無い状態なので、サイレント成功にせず例外にする。"""
     if not BLOB_TOKEN:
         raise Exception("BLOB_READ_WRITE_TOKEN 未設定：二重投稿防止の主砦(Blobマーカー)が無い")
@@ -97,7 +98,7 @@ def blob_mark_posted() -> None:
         try:
             r = requests.put(
                 "https://vercel.com/api/blob/",
-                params={"pathname": _salon_marker_path()},
+                params={"pathname": _marker_path(kind)},
                 headers={
                     "authorization": f"Bearer {BLOB_TOKEN}",
                     "x-api-version": "12",
@@ -118,13 +119,13 @@ def blob_mark_posted() -> None:
     raise Exception(f"Blobマーカー書込み失敗: {last}")
 
 
-def blob_posted_today() -> bool:
-    """今日の日付別マーカーがBlobに存在すれば True（＝存在確認だけ・値検証不要）。
-    取得失敗・未設定は False（fail-open：Blob障害時は投稿を優先＝副砦last_post.jsonが担保）。"""
+def blob_posted_today(kind: str = "salon") -> bool:
+    """今日の日付別マーカー(kind別)がBlobに存在すれば True（存在確認だけ）。
+    取得失敗・未設定は False（fail-open：Blob障害時は投稿を優先＝副砦の git マーカーが担保）。"""
     if not BLOB_TOKEN:
         return False
     try:
-        url = f"https://{_blob_state_host()}/{_salon_marker_path()}?t={int(time.time())}"
+        url = f"https://{_blob_state_host()}/{_marker_path(kind)}?t={int(time.time())}"
         return requests.get(url, timeout=15).status_code == 200
     except Exception as e:
         print(f"Blobマーカー取得失敗（投稿継続）: {e}", file=sys.stderr)

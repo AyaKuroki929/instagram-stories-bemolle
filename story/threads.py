@@ -18,7 +18,7 @@ from .auth import manage_meta_token
 from .config import BLOB_TOKEN, JST, LAST_POST_THREADS_FILE, THREADS_API, THREADS_TOKEN
 from .images import get_font, wrapped_lines
 from .notify import notify
-from .publisher import get_ig_user_id, post_to_stories, upload_image
+from .publisher import blob_mark_posted, blob_posted_today, get_ig_user_id, post_to_stories, upload_image
 from .state import mark_posted_local, posted_today_local
 
 THREADS_MORNING = (4, 11)   # JST 朝（7時投稿）。最優先
@@ -238,8 +238,10 @@ def run_threads_story() -> None:
 
     # サロン投稿(7:00)と同日に複数ストーリーが正常なので、Meta /stories判定は使わず
     # Threads専用のローカルマーカーのみで二重投稿防止。手動dispatchは常に投稿。
+    # 同日二重投稿防止：主砦=Blobマーカー(threads・git push非依存)＋副=last_post_threads.json(git)。
+    # 8:00/8:30/9:00の複数予備cronがあるため、push失敗でも残るBlobが二重投稿を確実に防ぐ。
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-    if not is_manual and posted_today_local(LAST_POST_THREADS_FILE):
+    if not is_manual and (blob_posted_today("threads") or posted_today_local(LAST_POST_THREADS_FILE)):
         print("本日のThreadsストーリーは投稿済みのためスキップ。")
         return
 
@@ -278,9 +280,18 @@ def run_threads_story() -> None:
     try:
         media_id = post_to_stories(ig_id, image_bytes)
         print(f"投稿完了: media_id={media_id}")
-        mark_posted_local(LAST_POST_THREADS_FILE)
     except Exception as e:
         print(f"Meta APIエラー: {e}", file=sys.stderr)
         notify(f"⚠️ @bemolle_diet Threadsストーリー失敗\nMeta APIエラー: {e}")
         sys.exit(1)
+
+    # 投稿成功 → 同日マーカーを記録。主砦=Blob（git push非依存で必ず残す）。
+    try:
+        blob_mark_posted("threads")
+        print("Blobマーカー更新（threads・二重投稿防止・恒久）")
+    except Exception as e:
+        print(f"Blobマーカー書込み失敗: {e}", file=sys.stderr)
+        notify(f"⚠️ @bemolle_diet Threadsストーリー：投稿は成功したがBlobマーカー書込みに失敗。\n"
+               f"予備cron(8:30/9:00)が二重投稿する恐れ。Actionsを確認してください: {e}")
+    mark_posted_local(LAST_POST_THREADS_FILE)  # 副：git用マーカー
     print("完了")
