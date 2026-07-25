@@ -1,14 +1,4 @@
 {
-  "1BH8gJEgvS_mdz5Rlq6_DAPXbomzkqZJa": {
-    "ts": "2026-07-10T07:01:25.689469+09:00",
-    "hash": "ffffffc080ffffff",
-    "series": "139a"
-  },
-  "1bKuOWVbX0oPj3AHDlvHzBsOXMdvd6kC9": {
-    "ts": "2026-07-11T07:01:47.982306+09:00",
-    "hash": "e1f3fdf9f9f9c0c0",
-    "series": "mur_"
-  },
   "1XzZgGIxo-BKdzjpGtTKKSxH-CFK-nroV": {
     "ts": "2026-07-12T07:01:31.380714+09:00",
     "hash": "3e7effcfc7c60018",
@@ -73,5 +63,10 @@
     "ts": "2026-07-24T07:01:21.743697+09:00",
     "hash": "ffc989790183070f",
     "series": "20250112-"
+  },
+  "1J-L39SsMqA8Z98FKa0FcyIuJHjRM9KqR": {
+    "ts": "2026-07-25T10:10:55.888158+09:00",
+    "hash": "696b7f3f0f0f3e3c",
+    "series": "mur_"
   }
 }
