@@ -6,6 +6,7 @@ Meta API による既投稿判定。
 from __future__ import annotations
 
 import base64
+import json
 import random
 import sys
 import time
@@ -64,6 +65,68 @@ def upload_to_blob(image_bytes: bytes) -> str:
 
 def upload_image(image_bytes: bytes, host: str) -> str:
     return upload_to_blob(image_bytes) if host == "blob" else upload_to_imgbb(image_bytes)
+
+
+# ── サロン投稿の同日マーカー（Vercel Blob・git push非依存の恒久ガード）──────
+# git commit/push は cross-workflow race で失敗し得る（=マーカー喪失→二重投稿）。
+# Blobは投稿直後に独立して上書きでき、サロン投稿だけが書くのでThreadsストーリーを数えない。
+# これを二重投稿防止の主砦にする（Meta /stories はアカウント全ストーリーを数えるため使わない）。
+SALON_STATE_PATH = "salon-state/last_post.json"
+
+
+def _blob_state_url() -> str:
+    # token: vercel_blob_rw_<STOREID>_<secret> → 公開URLのホストは storeid（小文字）
+    parts = BLOB_TOKEN.split("_")
+    store = parts[3].lower() if len(parts) >= 5 else ""
+    return f"https://{store}.public.blob.vercel-storage.com/{SALON_STATE_PATH}"
+
+
+def blob_mark_posted() -> None:
+    """サロン投稿成功をBlobの固定パスに記録（上書き）。3回失敗で例外。"""
+    if not BLOB_TOKEN:
+        return
+    body = json.dumps({
+        "date": datetime.now(JST).date().isoformat(),
+        "ts": datetime.now(JST).isoformat(),
+    }).encode()
+    last = ""
+    for _ in range(3):
+        try:
+            r = requests.put(
+                "https://vercel.com/api/blob/",
+                params={"pathname": SALON_STATE_PATH},
+                headers={
+                    "authorization": f"Bearer {BLOB_TOKEN}",
+                    "x-api-version": "12",
+                    "x-content-type": "application/json",
+                    "x-add-random-suffix": "0",
+                    "x-allow-overwrite": "1",
+                    "x-vercel-blob-access": "public",
+                },
+                data=body,
+                timeout=20,
+            )
+            if r.ok:
+                return
+            last = f"{r.status_code}:{r.text[:150]}"
+        except Exception as e:
+            last = str(e)
+        time.sleep(2)
+    raise Exception(f"Blobマーカー書込み失敗: {last}")
+
+
+def blob_posted_today() -> bool:
+    """Blobのサロン専用マーカーで今日(JST)投稿済みか。取得失敗はFalse（fail-open）。"""
+    if not BLOB_TOKEN:
+        return False
+    try:
+        # ?t= でCDNキャッシュを回避（上書き直後の取りこぼし防止）
+        r = requests.get(f"{_blob_state_url()}?t={int(time.time())}", timeout=15)
+        if r.status_code == 200:
+            return r.json().get("date") == datetime.now(JST).date().isoformat()
+    except Exception as e:
+        print(f"Blobマーカー取得失敗（投稿継続）: {e}", file=sys.stderr)
+    return False
 
 
 # ── Instagram Stories に投稿 ──────────────────────────────────

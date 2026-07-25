@@ -41,26 +41,32 @@ jobs:
           path: ~/jpfont
           key: noto-cjk-ttc-v1
       - name: Install Japanese fonts
-        timeout-minutes: 4
+        timeout-minutes: 6
         run: |
           DEST=/usr/share/fonts/opentype/noto
+          FONT="$DEST/NotoSansCJK-Regular.ttc"
+          CACHED="$HOME/jpfont/NotoSansCJK-Regular.ttc"
           sudo mkdir -p "$DEST"
-          if [ -f ~/jpfont/NotoSansCJK-Regular.ttc ]; then
+          # 破損キャッシュ自己修復：サイズが妥当(>1MB)な時だけキャッシュ採用、でなければaptへ
+          if [ -f "$CACHED" ] && [ "$(stat -c%s "$CACHED" 2>/dev/null || echo 0)" -gt 1000000 ]; then
             echo "font: cache hit"
-            sudo cp ~/jpfont/NotoSansCJK-Regular.ttc "$DEST/"
+            sudo cp "$CACHED" "$FONT"
           else
+            echo "font: cache miss/invalid → apt"; rm -f "$CACHED" 2>/dev/null || true
             ok=""
             for i in 1 2 3; do
               if sudo timeout 100 apt-get install -y --no-install-recommends fonts-noto-cjk; then ok=1; break; fi
               echo "apt install retry $i"; sudo timeout 60 apt-get update || true; sleep $((i*4))
             done
             [ -z "$ok" ] && { echo "::error::font install failed after retries"; exit 1; }
-            mkdir -p ~/jpfont
-            cp "$DEST/NotoSansCJK-Regular.ttc" ~/jpfont/ 2>/dev/null || \
-              find /usr/share/fonts -iname 'NotoSansCJK*.ttc' -exec cp {} ~/jpfont/NotoSansCJK-Regular.ttc \; || true
+            mkdir -p "$HOME/jpfont"
+            if [ -f "$FONT" ]; then cp "$FONT" "$CACHED"; else
+              f=$(find /usr/share/fonts -iname 'NotoSansCJK*.ttc' | head -1)
+              [ -n "$f" ] && { sudo cp "$f" "$FONT"; cp "$f" "$CACHED"; }
+            fi
           fi
           fc-cache -f >/dev/null 2>&1 || true
-          test -f "$DEST/NotoSansCJK-Regular.ttc" || { echo "::error::font missing after install"; exit 1; }
+          [ -f "$FONT" ] && [ "$(stat -c%s "$FONT" 2>/dev/null || echo 0)" -gt 1000000 ] || { echo "::error::font missing/invalid after install"; exit 1; }
           echo "font ready"
 
       - name: Set up Python
@@ -98,10 +104,12 @@ jobs:
           # push失敗＝投稿マーカー喪失＝予備cronが二重投稿する重大事象なのでリトライ＋通知
           ok=""
           for i in 1 2 3 4 5 6; do
+            git rebase --abort 2>/dev/null || true   # 前回rebase途中状態を必ず解消してから再試行
             git fetch origin main -q || true
             if git pull --rebase origin main && git push; then ok=1; break; fi
             echo "push失敗 ($i/6) → リトライ"; sleep $((i*3))
           done
+          git rebase --abort 2>/dev/null || true
           if [ -z "$ok" ]; then
             echo "::error::push failed after retries"
             curl -s -X POST https://api.line.me/v2/bot/message/broadcast \

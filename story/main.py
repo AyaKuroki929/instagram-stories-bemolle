@@ -14,7 +14,7 @@ from .config import JST
 from .content import generate_content, generate_sunday_content
 from .images import build_image
 from .notify import notify
-from .publisher import get_ig_user_id, post_to_stories
+from .publisher import blob_mark_posted, blob_posted_today, get_ig_user_id, post_to_stories
 from .state import mark_posted_local, posted_today_local
 from .threads import run_threads_story
 
@@ -40,13 +40,13 @@ def main() -> None:
 
     # 同日二重投稿防止：自動実行(schedule/repository_dispatch)のみ判定。
     # 手動 workflow_dispatch は意図的な再投稿なので常に通す。
-    # 判定は「サロン専用マーカー(last_post.json)」のみで行う。
-    # ※Meta /stories(already_posted_today)は使わない：アカウント上の全ストーリーを数えるため、
-    #   朝のThreads→ストーリー(8時)を「サロン投稿済み」と誤判定し、サロン投稿が失敗した日に
-    #   バックアップまでスキップさせる事故があった(2026-07-25)。マーカーはサロン投稿だけを記録し、
-    #   pushもリトライ強化＋concurrencyで信頼できるため、これを唯一の砦にする。
+    # 判定は「サロン専用マーカー」＝主砦=Blob(git push非依存)＋副=last_post.json(git)。
+    # ※Meta /stories(already_posted_today)は使わない：アカウント上の全ストーリーを数え、
+    #   朝のThreads→ストーリー(8時)を「サロン投稿済み」と誤判定してバックアップまでスキップさせる
+    #   事故があった(2026-07-25)。Blobマーカーはサロン投稿だけが書き、push失敗でも残るため
+    #   「Threadsによるマスキング」も「マーカー喪失による二重投稿」も同時に防げる。
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-    if not is_manual and posted_today_local():
+    if not is_manual and (blob_posted_today() or posted_today_local()):
         print("本日のサロンストーリーは投稿済みのためスキップ。")
         return
 
@@ -70,10 +70,20 @@ def main() -> None:
         # アップロードはpost_to_stories内で試行ごとに行う（失敗時に新URLで再投稿するため）
         media_id = post_to_stories(ig_id, image_bytes)
         print(f"投稿完了: media_id={media_id}")
-        mark_posted_local()  # 最終投稿日マーカー更新（二重投稿防止の永続化）
     except Exception as e:
         print(f"Meta APIエラー: {e}", file=sys.stderr)
         notify(f"⚠️ @bemolle_diet ストーリー失敗\nMeta APIエラー: {e}")
         sys.exit(1)
+
+    # 投稿成功 → 同日マーカーを記録。主砦=Blob（git push非依存で必ず残す）。
+    try:
+        blob_mark_posted()
+        print("Blobマーカー更新（二重投稿防止・恒久）")
+    except Exception as e:
+        # Blobが書けないと次回の二重投稿防止が弱まる → 明示的にLINE警告（沈黙の失敗を作らない）
+        print(f"Blobマーカー書込み失敗: {e}", file=sys.stderr)
+        notify(f"⚠️ @bemolle_diet ストーリー: 投稿は成功したがBlobマーカー書込みに失敗。\n"
+               f"本日のバックアップ実行が二重投稿する恐れ。Actionsを確認してください: {e}")
+    mark_posted_local()  # 副：git用マーカー（Save stepでcommit/push）
 
     print("完了")
