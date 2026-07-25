@@ -14,7 +14,7 @@ from .config import JST
 from .content import generate_content, generate_sunday_content
 from .images import build_image
 from .notify import notify
-from .publisher import already_posted_today, get_ig_user_id, post_to_stories
+from .publisher import get_ig_user_id, post_to_stories
 from .state import mark_posted_local, posted_today_local
 from .threads import run_threads_story
 
@@ -40,10 +40,14 @@ def main() -> None:
 
     # 同日二重投稿防止：自動実行(schedule/repository_dispatch)のみ判定。
     # 手動 workflow_dispatch は意図的な再投稿なので常に通す。
-    # ローカルマーカー（Meta非依存）とMeta /stories の両方で判定し、どちらかが今日ならスキップ。
+    # 判定は「サロン専用マーカー(last_post.json)」のみで行う。
+    # ※Meta /stories(already_posted_today)は使わない：アカウント上の全ストーリーを数えるため、
+    #   朝のThreads→ストーリー(8時)を「サロン投稿済み」と誤判定し、サロン投稿が失敗した日に
+    #   バックアップまでスキップさせる事故があった(2026-07-25)。マーカーはサロン投稿だけを記録し、
+    #   pushもリトライ強化＋concurrencyで信頼できるため、これを唯一の砦にする。
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
-    if not is_manual and (posted_today_local() or already_posted_today(ig_id)):
-        print("本日のストーリーは投稿済みのためスキップ。")
+    if not is_manual and posted_today_local():
+        print("本日のサロンストーリーは投稿済みのためスキップ。")
         return
 
     try:

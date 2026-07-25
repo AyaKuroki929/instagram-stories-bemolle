@@ -36,8 +36,34 @@ jobs:
         with:
           ref: main
 
+      # 日本語フォント：キャッシュ優先（通常ネット不要）＋apt高速失敗リトライ（10分ハング再発防止）
+      - name: Cache Japanese font
+        uses: actions/cache@v4
+        with:
+          path: ~/jpfont
+          key: noto-cjk-ttc-v1
       - name: Install Japanese fonts
-        run: sudo apt-get install -y fonts-noto-cjk
+        timeout-minutes: 4
+        run: |
+          DEST=/usr/share/fonts/opentype/noto
+          sudo mkdir -p "$DEST"
+          if [ -f ~/jpfont/NotoSansCJK-Regular.ttc ]; then
+            echo "font: cache hit"
+            sudo cp ~/jpfont/NotoSansCJK-Regular.ttc "$DEST/"
+          else
+            ok=""
+            for i in 1 2 3; do
+              if sudo timeout 100 apt-get install -y --no-install-recommends fonts-noto-cjk; then ok=1; break; fi
+              echo "apt install retry $i"; sudo timeout 60 apt-get update || true; sleep $((i*4))
+            done
+            [ -z "$ok" ] && { echo "::error::font install failed after retries"; exit 1; }
+            mkdir -p ~/jpfont
+            cp "$DEST/NotoSansCJK-Regular.ttc" ~/jpfont/ 2>/dev/null || \
+              find /usr/share/fonts -iname 'NotoSansCJK*.ttc' -exec cp {} ~/jpfont/NotoSansCJK-Regular.ttc \; || true
+          fi
+          fc-cache -f >/dev/null 2>&1 || true
+          test -f "$DEST/NotoSansCJK-Regular.ttc" || { echo "::error::font missing after install"; exit 1; }
+          echo "font ready"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -70,9 +96,10 @@ jobs:
           git diff --staged --quiet || git commit -m "chore: update last_post_threads [skip ci]"
           # マーカーのpush失敗＝8:30/9:00の予備cronが同じストーリーを再投稿するのでリトライ＋通知
           ok=""
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5 6; do
+            git fetch origin main -q || true
             if git pull --rebase origin main && git push; then ok=1; break; fi
-            echo "push失敗 ($i/3) → リトライ"; sleep $((i*5))
+            echo "push失敗 ($i/6) → リトライ"; sleep $((i*3))
           done
           if [ -z "$ok" ]; then
             echo "::error::push failed after retries"
