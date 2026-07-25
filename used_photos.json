@@ -1,9 +1,4 @@
 {
-  "1XzZgGIxo-BKdzjpGtTKKSxH-CFK-nroV": {
-    "ts": "2026-07-12T07:01:31.380714+09:00",
-    "hash": "3e7effcfc7c60018",
-    "series": "line_album_2026.03.25研究所視察_260331_"
-  },
   "1JymerZXG1cJJocdfSRg0u8YWnXurs2Ox": {
     "ts": "2026-07-13T07:01:34.582226+09:00",
     "hash": "ffe7f7e3e3e7e400",
@@ -68,5 +63,10 @@
     "ts": "2026-07-25T10:10:55.888158+09:00",
     "hash": "696b7f3f0f0f3e3c",
     "series": "mur_"
+  },
+  "1Fvex8kIcTVSB0JQ2wXPNd5eUno-H7h9-": {
+    "ts": "2026-07-26T07:01:45.223785+09:00",
+    "hash": "f0f8f8f4fcfc988c",
+    "series": "dsc"
   }
 }
