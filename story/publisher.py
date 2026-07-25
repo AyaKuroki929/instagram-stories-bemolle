@@ -71,20 +71,23 @@ def upload_image(image_bytes: bytes, host: str) -> str:
 # git commit/push は cross-workflow race で失敗し得る（=マーカー喪失→二重投稿）。
 # Blobは投稿直後に独立して上書きでき、サロン投稿だけが書くのでThreadsストーリーを数えない。
 # これを二重投稿防止の主砦にする（Meta /stories はアカウント全ストーリーを数えるため使わない）。
-SALON_STATE_PATH = "salon-state/last_post.json"
-
-
-def _blob_state_url() -> str:
+def _blob_state_host() -> str:
     # token: vercel_blob_rw_<STOREID>_<secret> → 公開URLのホストは storeid（小文字）
     parts = BLOB_TOKEN.split("_")
     store = parts[3].lower() if len(parts) >= 5 else ""
-    return f"https://{store}.public.blob.vercel-storage.com/{SALON_STATE_PATH}"
+    return f"{store}.public.blob.vercel-storage.com"
+
+
+def _salon_marker_path() -> str:
+    # 日付別の「不変」マーカー。毎日別パス＝上書きしない＝CDNの古い値を読む事故が起きない。
+    return f"salon-state/posted-{datetime.now(JST).date().isoformat()}.json"
 
 
 def blob_mark_posted() -> None:
-    """サロン投稿成功をBlobの固定パスに記録（上書き）。3回失敗で例外。"""
+    """今日のサロン投稿済みを日付別マーカーとしてBlobに作成。3回失敗で例外。
+    トークン未設定＝二重投稿防止の主砦が無い状態なので、サイレント成功にせず例外にする。"""
     if not BLOB_TOKEN:
-        return
+        raise Exception("BLOB_READ_WRITE_TOKEN 未設定：二重投稿防止の主砦(Blobマーカー)が無い")
     body = json.dumps({
         "date": datetime.now(JST).date().isoformat(),
         "ts": datetime.now(JST).isoformat(),
@@ -94,7 +97,7 @@ def blob_mark_posted() -> None:
         try:
             r = requests.put(
                 "https://vercel.com/api/blob/",
-                params={"pathname": SALON_STATE_PATH},
+                params={"pathname": _salon_marker_path()},
                 headers={
                     "authorization": f"Bearer {BLOB_TOKEN}",
                     "x-api-version": "12",
@@ -116,17 +119,16 @@ def blob_mark_posted() -> None:
 
 
 def blob_posted_today() -> bool:
-    """Blobのサロン専用マーカーで今日(JST)投稿済みか。取得失敗はFalse（fail-open）。"""
+    """今日の日付別マーカーがBlobに存在すれば True（＝存在確認だけ・値検証不要）。
+    取得失敗・未設定は False（fail-open：Blob障害時は投稿を優先＝副砦last_post.jsonが担保）。"""
     if not BLOB_TOKEN:
         return False
     try:
-        # ?t= でCDNキャッシュを回避（上書き直後の取りこぼし防止）
-        r = requests.get(f"{_blob_state_url()}?t={int(time.time())}", timeout=15)
-        if r.status_code == 200:
-            return r.json().get("date") == datetime.now(JST).date().isoformat()
+        url = f"https://{_blob_state_host()}/{_salon_marker_path()}?t={int(time.time())}"
+        return requests.get(url, timeout=15).status_code == 200
     except Exception as e:
         print(f"Blobマーカー取得失敗（投稿継続）: {e}", file=sys.stderr)
-    return False
+        return False
 
 
 # ── Instagram Stories に投稿 ──────────────────────────────────
