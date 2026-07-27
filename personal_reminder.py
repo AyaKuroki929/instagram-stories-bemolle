@@ -60,6 +60,23 @@ def _is_due(reminder: dict, today: date, now_slot: str) -> bool:
     return False
 
 
+def _missed(reminders: list, today: date, sent_log: dict) -> list:
+    """日付を過ぎたのに一度も送られていない once リマインドを拾う。
+    「設定したのに届かなかった」を沈黙させないための取りこぼし検知（2026-07-27追加）。
+    過去にCronCreate（セッション内保持）で作ったリマインドが誰にも気づかれず消えた事故の再発防止。"""
+    out = []
+    for r in reminders:
+        if r.get("type") != "once":
+            continue
+        try:
+            d = date.fromisoformat(r["date"])
+        except (KeyError, ValueError):
+            continue
+        if d < today and r["name"] not in sent_log and f"MISSED:{r['name']}" not in sent_log:
+            out.append((r, d))
+    return out
+
+
 def main() -> None:
     today = _today()
     reminders = json.load(open("reminders.json", encoding="utf-8"))
@@ -71,25 +88,52 @@ def main() -> None:
     sent_log: dict = state.setdefault("last_sent", {})
 
     now_slot = _now_slot()
+    dry_run = os.environ.get("DRY_RUN") == "1"
+
+    # 取りこぼし検知：期日を過ぎたのに一度も送られていないものがあれば警告を送る
+    missed = _missed(reminders, today, sent_log)
+    if missed:
+        names = "\n".join(f"・{r['name']}（{d} 予定）" for r, d in missed)
+        alert = ("🚨 リマインドの取りこぼしを検知しました\n\n"
+                 f"下記は予定日を過ぎましたが、一度も送信されていません。\n\n{names}\n\n"
+                 "内容を確認して、必要なら今すぐ対応してください。")
+        if dry_run:
+            print(f"[DRY_RUN] 取りこぼし警告:\n{alert}")
+        else:
+            from story.util import line_broadcast
+            if not line_broadcast(alert):
+                sys.exit("LINE送信失敗: 取りこぼし警告")
+            for r, _ in missed:
+                sent_log[f"MISSED:{r['name']}"] = today.isoformat()
+            print(f"取りこぼし警告を送信: {len(missed)}件")
+
     due = [
         r for r in reminders
         if _is_due(r, today, now_slot) and sent_log.get(r["name"]) != today.isoformat()
     ]
     if not due:
         print(f"{today}({now_slot}): 送信対象なし")
+        if missed and not dry_run:
+            with open(STATE_PATH, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+                f.write("\n")
         return
-
-    dry_run = os.environ.get("DRY_RUN") == "1"
     for r in due:
         if dry_run:
+            # ⚠️ DRY_RUNでは絶対に送信済みを記録しない。
+            # （記録すると本番当日に「送信済み」と判定され、リマインドが黙って飛ぶ。2026-07-27に実際に踏んだ）
             print(f"[DRY_RUN] {r['name']}: {r['message'].splitlines()[0]} …")
-        else:
-            from story.util import line_broadcast
-            if not line_broadcast(r["message"]):
-                # 失敗はexit 1でworkflowをfailさせ、failure()の🚨通知に任せる
-                sys.exit(f"LINE送信失敗: {r['name']}")
-            print(f"送信: {r['name']}")
+            continue
+        from story.util import line_broadcast
+        if not line_broadcast(r["message"]):
+            # 失敗はexit 1でworkflowをfailさせ、failure()の🚨通知に任せる
+            sys.exit(f"LINE送信失敗: {r['name']}")
+        print(f"送信: {r['name']}")
         sent_log[r["name"]] = today.isoformat()
+
+    if dry_run:
+        print("[DRY_RUN] 状態ファイルは更新しません")
+        return
 
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
