@@ -1,0 +1,38 @@
+name: リマインダー自己点検
+
+# リマインダー周りを触ったら毎回、機械で点検する（人の目に頼らない）。
+# 見るのは3つ：形式が正しいか／予定日に本当に発火する設定か／DRY_RUNが状態ファイルを壊さないか。
+# 「設定したのに届かない」は気づけないまま日付を過ぎるので、pushの時点で止める。
+on:
+  push:
+    branches: [main]
+    paths:
+      - reminders.json
+      - personal_reminder.py
+      - check_reminders.py
+      - .github/workflows/personal_reminder.yml
+  workflow_dispatch:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check reminders
+        run: python3 check_reminders.py
+
+      # 点検に落ちたら黙って赤いだけにせず、彩さんのLINEへ届ける
+      - name: Notify on failure
+        if: failure()
+        env:
+          LINE_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          TEXT="🚨 リマインダー自己点検に失敗しました\n\nリマインドが届かない設定になっている可能性があります。\nClaudeに「リマインダー点検して」と伝えてください。\n\nhttps://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"messages\":[{\"type\":\"text\",\"text\":\"$TEXT\"}]}"
