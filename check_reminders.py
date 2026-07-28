@@ -23,7 +23,7 @@ from datetime import date
 
 import personal_reminder as pr
 
-VALID_SLOTS = {"morning", "evening"}
+VALID_SLOTS = {"early", "morning", "evening"}
 VALID_TYPES = {"once", "monthly"}
 
 
@@ -81,10 +81,10 @@ def main() -> int:
         slot = r.get("slot", "morning")
         if not pr._is_due(r, d, slot):
             fail(f"予定日に発火しない設定になっている: {r['name']}（{d} / {slot}）", errors)
-        # 逆スロットで誤爆しないことも確認
-        other = "evening" if slot == "morning" else "morning"
-        if pr._is_due(r, d, other):
-            fail(f"指定外の時間帯にも発火してしまう: {r['name']}", errors)
+        # 指定外スロットで誤爆しないことも確認
+        for other in VALID_SLOTS - {slot}:
+            if pr._is_due(r, d, other):
+                fail(f"指定外の時間帯にも発火してしまう: {r['name']}（{other}）", errors)
 
     # ── ③ DRY_RUN が状態ファイルを汚さないか ──────────
     with tempfile.TemporaryDirectory() as tmp:

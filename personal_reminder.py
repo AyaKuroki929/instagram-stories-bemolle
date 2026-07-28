@@ -8,9 +8,11 @@ reminders.json のエントリ形式:
   {"name": "...", "type": "once",    "date": "YYYY-MM-DD", "message": "..."}  # 1回だけ
 
   任意キー "slot"（送る時間帯）:
+    "early"                 … 7:00 JST に送る（プラン変更・解約などその日のうちに人へ依頼する系）
     "morning"（既定・省略時）… 9:00 JST に送る
     "evening"               … 20:00 JST に送る
-  彩さんは朝9時は準備中で携帯を触れないため、夜に受け取りたいものは "slot": "evening" を付ける。
+  当日中に誰かへ依頼する作業は "early"（20時では遅い・2026-07-28本人指示）。
+  夜に受け取りたいものは "evening"。
 
 送信済みは reminder_state.json の {"last_sent": {"<name>": "YYYY-MM-DD"}} で管理。
 保険cronで同日に2回発火しても重複送信しない。
@@ -41,13 +43,18 @@ def _today() -> date:
 
 
 def _now_slot() -> str:
-    """今どちらの時間帯の実行か。朝cron(9:00/9:40 JST)→morning、夜cron(20:00/20:40 JST)→evening。
-    境界は17時。GitHubのschedule混雑で朝cronが数時間遅延しても（過去に実績あり）、
-    16時台までは朝扱いにして「遅れて夜と誤判定→朝リマインドが黙って消える」を防ぐ。"""
+    """今どの時間帯の実行か。early=7:00/7:40 → morning=9:00/9:40 → evening=20:00/20:40 (JST)。
+    境界はcron遅延に耐えるよう広めに取る（8時台まではearly扱い・16時台まではmorning扱い）。
+    それ以上ずれた場合はその回は送られず、翌日の取りこぼし検知🚨が拾う。"""
     override = os.environ.get("REMINDER_SLOT_OVERRIDE", "")
     if override:
         return override
-    return "evening" if datetime.now(JST).hour >= 17 else "morning"
+    h = datetime.now(JST).hour
+    if h < 9:
+        return "early"
+    if h < 17:
+        return "morning"
+    return "evening"
 
 
 def _is_due(reminder: dict, today: date, now_slot: str) -> bool:
