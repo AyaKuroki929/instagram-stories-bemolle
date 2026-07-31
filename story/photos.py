@@ -141,7 +141,7 @@ def _score_candidates(candidates: list[dict], recent_h: list[str]) -> list[tuple
 
 
 # ── Google Drive から背景写真を取得（コース内容に連動） ─────────
-def get_drive_photo(course_pool: list[str]) -> bytes | None:
+def get_drive_photo(course_pool: list[str], only_names: list[str] | None = None) -> bytes | None:
     if not GDRIVE_REFRESH:
         return None
     try:
@@ -205,6 +205,9 @@ def get_drive_photo(course_pool: list[str]) -> bytes | None:
             )
             r2.raise_for_status()
             files = r2.json().get("files", [])
+            # 月初ストーリー等：指定ファイル名だけに絞る（締めっぽい写真のプール）
+            if only_names:
+                files = [f for f in files if f["name"] in only_names]
             if not files:
                 continue
 

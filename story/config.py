@@ -33,6 +33,13 @@ GDRIVE_FOLDER_SLIM   = "170R8MxD_ByugDmxctVQbpmY2p3nXVDK8"  # 痩身
 GDRIVE_FOLDER_FACIAL = "1DwNv1e5_j4YnDt23DNgYp9RatJQYpGtj"  # 肌質改善
 GDRIVE_FOLDER_COMMON = "18eBpPM72QvZrlVwCAmeenfq6pNjoIEQy"   # 共通（部屋・内装など汎用）
 IG_USER_ID     = os.environ.get("IG_USER_ID", "17841470478859455")
+
+# 毎月1日の感謝ストーリー用の背景写真プール（締めっぽい画＝彩さん白衣の笑顔正面＋ロゴと花。
+# 2026-08-01彩さん承認・すべて「共通」フォルダ内のファイル名）
+MONTHLY_PHOTOS = [
+    "139A9611.JPG", "139A9618.JPG", "139A9631.JPG", "139A9634.JPG", "139A9640.JPG",
+    "DSC09457.JPG", "20250112-7.jpg",
+]
 META_API       = "https://graph.facebook.com/v25.0"
 JST            = timezone(timedelta(hours=9))
 

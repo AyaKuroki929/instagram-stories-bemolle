@@ -11,7 +11,7 @@ from datetime import datetime
 
 from .auth import manage_meta_token
 from .config import JST
-from .content import generate_content, generate_sunday_content
+from .content import generate_monthly_content, generate_content, generate_sunday_content
 from .images import build_image
 from .notify import notify
 from .publisher import blob_mark_posted, blob_posted_today, get_ig_user_id, post_to_stories
@@ -37,6 +37,24 @@ def main() -> None:
 
     # トークン期限管理（自動延長 → 失敗時はLINE警告）
     manage_meta_token()
+
+    # 毎月1日：通常ストーリーの前に「先月の感謝＋今月の意気込み」を投稿（2026-08-01彩さん指示）。
+    # 月マーカー(Blob・月単位)で月1回だけ。日曜でも実施。失敗しても通常ストーリーは止めない。
+    if today.day == 1 and not blob_posted_today("monthly"):
+        try:
+            m_content = generate_monthly_content(today)
+            m_image = build_image(m_content, today)
+            m_id = post_to_stories(ig_id, m_image)
+            print(f"月初の感謝ストーリー投稿完了: media_id={m_id}")
+            try:
+                blob_mark_posted("monthly")
+                print("Blobマーカー更新（monthly）")
+            except Exception as e:
+                print(f"monthlyマーカー書込み失敗: {e}", file=sys.stderr)
+                notify(f"⚠️ @bemolle_diet 月初ストーリー: 投稿成功もマーカー書込み失敗（重複の恐れ）: {e}")
+        except Exception as e:
+            print(f"月初ストーリー失敗（通常投稿は継続）: {e}", file=sys.stderr)
+            notify(f"⚠️ @bemolle_diet 月初の感謝ストーリー投稿に失敗（通常ストーリーは継続します）\n{e}")
 
     # 同日二重投稿防止：自動実行(schedule/repository_dispatch)のみ判定。
     # 手動 workflow_dispatch は意図的な再投稿なので常に通す。

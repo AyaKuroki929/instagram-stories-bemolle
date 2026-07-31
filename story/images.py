@@ -337,7 +337,7 @@ def build_image(content: dict, today: datetime) -> bytes:
     W, H = 1080, 1920
 
     # 背景：Drive写真 → 取得不可なら予備写真キャッシュ → どちらも無い時だけグラデ
-    photo_bytes = get_drive_photo(content["courses"]) or load_fallback_photo()
+    photo_bytes = get_drive_photo(content["courses"], content.get("photo_names")) or load_fallback_photo()
     bg_result = None
     if photo_bytes:
         try:

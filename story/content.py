@@ -11,7 +11,7 @@ from datetime import datetime
 
 import requests
 
-from .config import ANTHROPIC_KEY, COURSES_FACIAL, COURSES_SLIM
+from .config import ANTHROPIC_KEY, COURSES_FACIAL, COURSES_SLIM, MONTHLY_PHOTOS
 from .state import load_recent_closings, save_recent_text
 from .util import claude_text, extract_json
 
@@ -26,6 +26,20 @@ def get_season(today: datetime) -> str:
     elif md < (9, 8):                    return "夏"
     elif md < (11, 16):                  return "秋"
     else:                                return "冬"
+
+
+# ── 毎月1日の感謝コンテンツ（2026-08-01彩さん指示・文言は本人指定ベースの固定文）──
+def generate_monthly_content(today: datetime) -> dict:
+    """毎月1日、通常ストーリーの前に上げる「先月の感謝＋今月の意気込み」。
+    月初の朝に確実に出すことを最優先し、AI生成は使わない（固定文）。コース一覧なし。"""
+    return {
+        "greeting": "おはようございます。",
+        "status": "先月はたくさんのお客様にご来店いただき、ありがとうございました。"
+                  "嬉しい結果もたくさん出て、幸せな1ヶ月でした。",
+        "closing": "今月もたくさんの方を綺麗にしていきたいので、よろしくお願いいたします。",
+        "courses": [],
+        "photo_names": MONTHLY_PHOTOS,  # 背景は締めっぽい写真プールから
+    }
 
 
 # ── 日曜定休日コンテンツ生成 ──────────────────────────────────

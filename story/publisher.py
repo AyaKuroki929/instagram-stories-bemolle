@@ -81,6 +81,9 @@ def _blob_state_host() -> str:
 def _marker_path(kind: str = "salon") -> str:
     # 日付別の「不変」マーカー。毎日別パス＝上書きしない＝CDNの古い値を読む事故が起きない。
     # kind でサロン投稿(salon)とThreads→ストーリー(threads)を分離＝互いを数えない。
+    # monthly は月単位（毎月1日の感謝ストーリー用・月1回だけ）。
+    if kind == "monthly":
+        return f"monthly-state/posted-{datetime.now(JST).strftime('%Y-%m')}.json"
     return f"{kind}-state/posted-{datetime.now(JST).date().isoformat()}.json"
 
 
