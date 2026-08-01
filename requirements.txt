@@ -2,5 +2,5 @@ anthropic>=0.30.0
 Pillow>=10.0.0
 requests>=2.31.0
 pynacl>=1.5.0
-opencv-python-headless==4.10.0.84  # 最新版でCascadeClassifier消失エラー(2026-07/08実害)→既知安定版に固定
+opencv-python-headless>=4.9.0
 budoux>=0.6.0
