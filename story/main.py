@@ -19,11 +19,12 @@ from .state import mark_posted_local, posted_today_local, save_monthly_text
 from .threads import run_threads_story
 
 
-def post_monthly_if_first_day(today: datetime, ig_id: str) -> None:
+def post_monthly_if_first_day(today: datetime, ig_id: str, force: bool = False) -> None:
     """毎月1日、通常ストーリーの「後」に「先月の感謝＋今月の意気込み」を投稿（2026-08-01彩さん指示）。
     おはようございます（通常）→ 感謝、の順で並ばせる。月マーカー(Blob・月単位)で月1回だけ。
-    日曜でも実施。通常が投稿済みスキップの日でも、月初が未投稿ならここで後追い投稿する。"""
-    if today.day != 1 or blob_posted_today("monthly"):
+    日曜でも実施。通常が投稿済みスキップの日でも、月初が未投稿ならここで後追い投稿する。
+    force=True（手動のあげ直し）はマーカーを無視して投稿する。"""
+    if not force and (today.day != 1 or blob_posted_today("monthly")):
         return
     try:
         m_content = generate_monthly_content(today)
@@ -68,6 +69,11 @@ def main() -> None:
 
     # トークン期限管理（自動延長 → 失敗時はLINE警告）
     manage_meta_token()
+
+    # 手動あげ直し用：月初の感謝ストーリーだけを投稿して終了（通常ストーリーは触らない）
+    if os.environ.get("STORY_MONTHLY_ONLY") == "1":
+        post_monthly_if_first_day(today, ig_id, force=True)
+        return
 
     # 同日二重投稿防止：自動実行(schedule/repository_dispatch)のみ判定。
     # 手動 workflow_dispatch は意図的な再投稿なので常に通す。

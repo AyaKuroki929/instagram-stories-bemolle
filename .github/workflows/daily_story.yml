@@ -9,6 +9,10 @@ on:
         description: '今日だけ ご新規＋肌質改善体験 を入れる'
         type: boolean
         default: false
+      monthly_only:
+        description: '月初の感謝ストーリーだけを上げ直す（通常ストーリーは投稿しない）'
+        type: boolean
+        default: false
   repository_dispatch:
     types: [daily_story]  # cron-job.orgからの発火（主系）
 
@@ -91,6 +95,7 @@ jobs:
           GOOGLE_CLIENT_ID:         ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET:     ${{ secrets.GOOGLE_CLIENT_SECRET }}
           STORY_FORCE_FACIAL_TRIAL: ${{ github.event.inputs.force_facial_trial == 'true' && '1' || '' }}
+          STORY_MONTHLY_ONLY:       ${{ github.event.inputs.monthly_only == 'true' && '1' || '' }}
         run: python post_story.py
 
       - name: Save photo rotation log
