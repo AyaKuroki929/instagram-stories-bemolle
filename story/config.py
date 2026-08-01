@@ -39,7 +39,7 @@ IG_USER_ID     = os.environ.get("IG_USER_ID", "17841470478859455")
 # 2026-08-01彩さん承認・すべて「共通」フォルダ内のファイル名）
 MONTHLY_PHOTOS = [
     "139A9611.JPG", "139A9618.JPG", "139A9631.JPG", "139A9634.JPG",
-    "補正済み.jpg", "20250112-7.jpg",
+    "補正済み.jpg",
 ]
 META_API       = "https://graph.facebook.com/v25.0"
 JST            = timezone(timedelta(hours=9))
