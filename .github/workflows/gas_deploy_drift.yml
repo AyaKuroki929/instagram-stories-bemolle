@@ -1,0 +1,60 @@
+name: GAS Deploy Drift Watch (デプロイ版ズレ監視)
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # 毎日 00:00 UTC = 09:00 JST
+  workflow_dispatch:       # 手動テスト用
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gas-deploy-drift
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install clasp
+        run: npm install -g @google/clasp@3.3.0
+
+      - name: Restore clasp auth
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ]; then
+            echo "::error::CLASPRC_JSON secret 未設定。監視できません（GASを読む認証がない）。"
+            exit 1
+          fi
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check deploy drift
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: python gas_deploy_watch.py
+
+      # 監視ジョブ自体が失敗/中断＝監視が効いていない沈黙。別途 Claude通知Bot へ鳴らす。
+      # （ドリフト検知時はスクリプトが送信済みで exit 0 のため、ここは二重送信しない）
+      - name: Notify on workflow failure
+        if: failure() || cancelled()
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer $LINE_CHANNEL_ACCESS_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"⚠️ GASデプロイ版ズレ監視ジョブが失敗/中断しました。監視が効いていない可能性があります。Actionsを確認してください。"}]}'
