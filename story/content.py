@@ -122,6 +122,7 @@ closing: {closing}
         "closing": closing,
         "courses": [],
         "photo_names": MONTHLY_PHOTOS,  # 背景は締めっぽい写真プールから
+        "layout": "lower",  # 顔が上部にある写真向け：文字は下半分＋暗幕（2026-08-01彩さん指摘）
         "pattern": idx,
     }
 

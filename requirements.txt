@@ -2,5 +2,5 @@ anthropic>=0.30.0
 Pillow>=10.0.0
 requests>=2.31.0
 pynacl>=1.5.0
-opencv-python-headless>=4.9.0
+opencv-python-headless==4.10.0.84  # CIでCascadeClassifier消失(顔検出死)→安定版固定。顔回避配置に必須
 budoux>=0.6.0

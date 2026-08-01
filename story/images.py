@@ -10,7 +10,7 @@ import sys
 from datetime import datetime
 from io import BytesIO
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 
 try:
     from budoux import load_default_japanese_parser
@@ -388,25 +388,75 @@ def build_image(content: dict, today: datetime) -> bytes:
 
     draw = ImageDraw.Draw(img)
 
-    def draw_block(text: str, font: ImageFont.FreeTypeFont, color: tuple,
-                   y: int, max_w: int) -> int:
-        lh = font.getbbox("あ")[3] + 16
-        for ln in wrapped_lines(text, font, max_w):
-            draw.text((W // 2, y), ln, font=font, fill=color, anchor="mt")
-            y += lh
-        return y
-
-    # ── メインテキスト（上部・中央） ──
+    # ── メインテキスト（顔回避配置＋白背景のときだけ文字にソフト影・2026-08-01彩さん指示）──
     greet_font = get_font(52)
     close_font = get_font(44)
     pad = 80
 
-    y = 300
-    y = draw_block(content["greeting"], greet_font, text_main, y, W - pad * 2)
-    y += 40
-    y = draw_block(content["status"],   greet_font, text_main, y, W - pad * 2)
-    y += 40
-    y = draw_block(content["closing"],  close_font, text_sub,  y, W - pad * 2)
+    is_lower_pref = content.get("layout") == "lower"  # 月初の感謝ストーリーは下寄せを優先
+    closing_font = greet_font if is_lower_pref else close_font
+    closing_color = text_main if is_lower_pref else text_sub
+
+    blocks = [b for b in [
+        (content["greeting"], greet_font, text_main),
+        (content["status"],   greet_font, text_main),
+        (content["closing"],  closing_font, closing_color),
+    ] if b[0]]
+
+    def block_height(t: str, f: ImageFont.FreeTypeFont) -> int:
+        lh = f.getbbox("あ")[3] + 16
+        return lh * len(wrapped_lines(t, f, W - pad * 2))
+
+    total = sum(block_height(t, f) for t, f, _ in blocks) + 40 * (len(blocks) - 1)
+
+    # 配置候補：上（従来）と下（顔が上部にある写真用）。顔と重なる候補を避ける
+    cand = {"top": 300, "bottom": max(320, 1660 - total)}
+    pref = ["bottom", "top"] if is_lower_pref else ["top", "bottom"]
+    faces = detect_faces(img) or []
+
+    def face_overlap(y0: int) -> int:
+        r_top, r_bot = y0 - 30, y0 + total + 30
+        area = 0
+        for (fx, fy, fw, fh) in faces:
+            oy = max(0, min(r_bot, fy + fh) - max(r_top, fy))
+            area += oy * fw
+        return area
+
+    if faces:
+        zero = [cand[p] for p in pref if face_overlap(cand[p]) == 0]
+        y0 = zero[0] if zero else min((cand[p] for p in pref), key=face_overlap)
+    else:
+        y0 = cand[pref[0]]
+
+    # 文字予定エリアの明るさを実測し、白っぽい時だけ文字下にふわっとした影を敷く（常時の暗幕はしない）
+    region = img.crop((0, max(0, y0 - 20), W, min(H, y0 + total + 20))).convert("L")
+    bright = ImageStat.Stat(region).mean[0] > 132
+
+    img_rgba = img.convert("RGBA")
+    if bright:
+        sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        sd = ImageDraw.Draw(sh)
+        yy = y0
+        for t, f, _c in blocks:
+            lh = f.getbbox("あ")[3] + 16
+            for ln in wrapped_lines(t, f, W - pad * 2):
+                sd.text((W // 2, yy + 4), ln, font=f, fill=(15, 12, 14, 185),
+                        anchor="mt", stroke_width=7, stroke_fill=(15, 12, 14, 185))
+                yy += lh
+            yy += 40
+        sh = sh.filter(ImageFilter.GaussianBlur(9))
+        img_rgba = Image.alpha_composite(img_rgba, sh)
+
+    d2 = ImageDraw.Draw(img_rgba)
+    yy = y0
+    for t, f, c in blocks:
+        lh = f.getbbox("あ")[3] + 16
+        for ln in wrapped_lines(t, f, W - pad * 2):
+            d2.text((W // 2, yy), ln, font=f, fill=c, anchor="mt")
+            yy += lh
+        yy += 40
+    img = img_rgba.convert("RGB")
+    draw = ImageDraw.Draw(img)
 
     # ── コース一覧（右下）※日曜定休日は非表示 ──
     if content.get("courses"):
