@@ -121,9 +121,11 @@ closing: {closing}
         "status": status,
         "closing": closing,
         "courses": [],
-        # 上げ直し等で写真を固定したい時は STORY_MONTHLY_PHOTO にファイル名を指定（通常はプールから自動）
-        "photo_names": ([os.environ["STORY_MONTHLY_PHOTO"]]
-                        if os.environ.get("STORY_MONTHLY_PHOTO") else MONTHLY_PHOTOS),
+        # 月初の写真は「その月の1枚」に固定（月替わりローテ）。プレビューと本番が必ず同じ写真になり、
+        # 14日クールダウンの影響で写真がすり替わる事故を起こさない（2026-08-01彩さん指示）。
+        # 上げ直し等でさらに固定したい時は STORY_MONTHLY_PHOTO にファイル名を指定。
+        "photo_names": [os.environ.get("STORY_MONTHLY_PHOTO")
+                        or MONTHLY_PHOTOS[(today.year * 12 + today.month) % len(MONTHLY_PHOTOS)]],
         "layout": "lower",  # 顔が上部にある写真向け：文字は下半分＋暗幕（2026-08-01彩さん指摘）
         "pattern": idx,
     }
