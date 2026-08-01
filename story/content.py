@@ -121,7 +121,9 @@ closing: {closing}
         "status": status,
         "closing": closing,
         "courses": [],
-        "photo_names": MONTHLY_PHOTOS,  # 背景は締めっぽい写真プールから
+        # 上げ直し等で写真を固定したい時は STORY_MONTHLY_PHOTO にファイル名を指定（通常はプールから自動）
+        "photo_names": ([os.environ["STORY_MONTHLY_PHOTO"]]
+                        if os.environ.get("STORY_MONTHLY_PHOTO") else MONTHLY_PHOTOS),
         "layout": "lower",  # 顔が上部にある写真向け：文字は下半分＋暗幕（2026-08-01彩さん指摘）
         "pattern": idx,
     }
