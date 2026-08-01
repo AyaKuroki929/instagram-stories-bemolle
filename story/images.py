@@ -135,10 +135,15 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
             except Exception:
                 chunks = []
             idx = 0
-            for ch in chunks[:-1]:
+            for i2, ch in enumerate(chunks[:-1]):
                 idx += len(ch)
                 if len(ch) < 2:
                     continue  # 1文字チャンク（心から|く|つろいで 等のモデル癖）は次と結合
+                nxt_ch = chunks[i2 + 1]
+                # 2文字以下のひらがな断片同士の境界（いく|つも 等）もモデルの語中割れ癖→候補にしない
+                if (len(ch) <= 2 and len(nxt_ch) <= 2
+                        and all(_is_hira(c) for c in ch) and all(_is_hira(c) for c in nxt_ch)):
+                    continue
                 budoux_bounds.add(idx)
         for k in range(1, n):
             if not _hard_ok(sent, k):
@@ -235,6 +240,22 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
         for sent in re.findall(r"[^。]*。|[^。]+", para):
             # 読点で句に分割（、は句末に保持）→ 収まる限り句をまとめてグループ化
             clauses = re.findall(r"[^、]*、|[^、]+", sent)
+            # 短い句（表示4文字以下・「8月も、」等）は単独行になると不格好なので、次の句と結合してから扱う
+            norm, buf = [], ""
+            for cl in clauses:
+                cur = buf + cl
+                buf = ""
+                disp_cl = cur[:-1] if cur.endswith("、") else cur
+                if len(disp_cl) <= 4:
+                    buf = cur
+                else:
+                    norm.append(cur)
+            if buf:
+                if norm:
+                    norm[-1] = norm[-1] + buf
+                else:
+                    norm = [buf]
+            clauses = norm
             groups: list[str] = []
             cur = ""
             for cl in clauses:
