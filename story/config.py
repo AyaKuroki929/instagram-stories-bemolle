@@ -20,6 +20,7 @@ USED_PHOTOS_FILE     = "used_photos.json"
 LAST_POST_FILE       = "last_post.json"   # 最終投稿日マーカー（Meta API非依存の二重投稿防止・第2の砦）
 LAST_POST_THREADS_FILE = "last_post_threads.json"  # Threads→ストーリー用の最終投稿日マーカー（サロン投稿と独立）
 RECENT_TEXTS_FILE    = "recent_texts.json"  # 最近の挨拶・締め文の履歴（書き出しの連日重複を防ぐ）
+MONTHLY_TEXTS_FILE   = "monthly_texts.json"  # 月初感謝ストーリーの使用文履歴（言い回しを一生被らせない）
 THREADS_TOKEN        = os.environ.get("THREADS_API_TOKEN_BEMOLLE", "")  # ベモーレThreads（threadsモードのみ必須・threads-botと同名）
 THREADS_API          = "https://graph.threads.net/v1.0"
 FALLBACK_DIR         = "fallback_photos"  # Drive障害時に使う実写真キャッシュ（複数枚・グラデ背景を出さないため）

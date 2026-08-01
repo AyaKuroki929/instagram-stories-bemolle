@@ -28,17 +28,101 @@ def get_season(today: datetime) -> str:
     else:                                return "冬"
 
 
-# ── 毎月1日の感謝コンテンツ（2026-08-01彩さん指示・文言は本人指定ベースの固定文）──
+# ── 毎月1日の感謝コンテンツ（2026-08-01彩さん承認の4パターンをローテーション）──
+# 通常ストーリーの「後」に上げる（おはようございます→感謝の順・2026-08-01彩さん指示）。
+# 挨拶なし・引用に句点を入れない・ダッシュ絶対禁止・「させてください」の姿勢。
+MONTHLY_PATTERNS = [
+    {  # A: 王道（感謝→嬉しい報告→させてください）
+        "status": "{prev}月もご来店いただき、ありがとうございました。"
+                  "「肌の調子が良くなった」「周りに気づいてもらえた」"
+                  "そんな嬉しいご報告をいくつもいただいた1ヶ月でした。",
+        "closing": "{cur}月も、皆様の綺麗をサポートさせてください。今月もよろしくお願いいたします。",
+    },
+    {  # B: お客様の頑張りを立てる
+        "status": "{prev}月も、ご来店ありがとうございました。"
+                  "結果が出たのは、通い続けてくださった皆様の頑張りがあってこそです。"
+                  "そのお手伝いができたことが、嬉しい1ヶ月でした。",
+        "closing": "{cur}月も、皆様の綺麗のお手伝いをさせてください。心よりお待ちしております。",
+    },
+    {  # C: 変化への喜び
+        "status": "{prev}月はご来店いただき、ありがとうございました。"
+                  "お会いするたびに表情が明るくなっていく。"
+                  "その変化を近くで見られて、嬉しい1ヶ月でした。",
+        "closing": "{cur}月も、皆様がもっと自分を好きになれるように、サポートさせてください。"
+                   "今月もよろしくお願いいたします。",
+    },
+    {  # D: 月の始まりから入る
+        "status": "{cur}月が始まりました。{prev}月もご来店いただき、ありがとうございました。"
+                  "嬉しい変化のご報告が多く、私たちも励まされた1ヶ月でした。",
+        "closing": "今月も、皆様の綺麗をサポートさせてください。どうぞよろしくお願いいたします。",
+    },
+]
+
+
 def generate_monthly_content(today: datetime) -> dict:
-    """毎月1日、通常ストーリーの前に上げる「先月の感謝＋今月の意気込み」。
-    月初の朝に確実に出すことを最優先し、AI生成は使わない（固定文）。コース一覧なし。"""
+    """毎月1日、通常ストーリーの後に上げる「先月の感謝＋今月の意気込み」。
+    構成は4パターンを月替わりローテーション。同じパターンの2回目以降は、過去の全文履歴を
+    渡して「言い回しを一生被らせない」変化版をHaikuで生成（失敗時は承認済みベース文で投稿を止めない）。"""
+    from .state import load_monthly_texts
+
+    prev = (today.month - 2) % 12 + 1
+    cur = today.month
+    idx = (today.year * 12 + today.month) % 4
+    base = MONTHLY_PATTERNS[idx]
+    status = base["status"].format(prev=prev, cur=cur)
+    closing = base["closing"].format(prev=prev, cur=cur)
+
+    history = load_monthly_texts()
+    used_this_pattern = [h for h in history if h.get("pattern") == idx]
+    if used_this_pattern:  # 2周目以降だけ変化版を生成（1周目は承認済み原文）
+        try:
+            past = "\n".join(f"・{h['status']}／{h['closing']}" for h in history)
+            prompt = f"""あなたはエステサロン「ベモーレ」のInstagramストーリー文を書くライターです。
+毎月1日の「先月の感謝＋今月の意気込み」ストーリーの文章を、下のベース文と同じ構成・同じ姿勢のまま、
+言い回しだけ新しくして作ってください。
+
+【ベース文（構成と温度感はこのまま）】
+status: {status}
+closing: {closing}
+
+【過去に使った文＝言い回し・フレーズを一切繰り返さない】
+{past}
+
+【厳守ルール】
+・「おはようございます」は入れない（直前の通常ストーリーに入っているため）
+・「{prev}月」への感謝→嬉しい報告や変化→「{cur}月も〜させてください」の姿勢（こちらが奉仕する側）
+・かぎかっこ内の短いセリフ引用に句点「。」は入れない
+・ダッシュ（—や——）は絶対に使わない
+・大げさな言葉禁止：報酬・栄養・原点・誇り・何より・一番の・最高の・かけがえのない・たくさん の連発
+・「皆さん」でなく「皆様」。「来院」でなく「来店」
+・長さはベース文と同程度。飾らず、現場でそのまま言える言葉で
+
+以下のJSONのみ出力：
+{{"status": "...", "closing": "..."}}"""
+            result = extract_json(claude_text(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+                temperature=1,
+                messages=[{"role": "user", "content": prompt}],
+                api_key=ANTHROPIC_KEY,
+            ))
+            new_s, new_c = (result.get("status") or "").strip(), (result.get("closing") or "").strip()
+            ok = (new_s and new_c and "—" not in new_s + new_c
+                  and "おはよう" not in new_s + new_c and f"{cur}月" in new_s + new_c)
+            if ok:
+                status, closing = new_s, new_c
+            else:
+                print("月初文の生成が検証NG→承認済みベース文を使用", file=sys.stderr)
+        except Exception as e:
+            print(f"月初文の生成失敗→承認済みベース文を使用: {e}", file=sys.stderr)
+
     return {
-        "greeting": "おはようございます。",
-        "status": "先月はたくさんのお客様にご来店いただき、ありがとうございました。"
-                  "嬉しい結果もたくさん出て、幸せな1ヶ月でした。",
-        "closing": "今月もたくさんの方を綺麗にしていきたいので、よろしくお願いいたします。",
+        "greeting": "",  # 挨拶なし（通常ストーリー側にある）
+        "status": status,
+        "closing": closing,
         "courses": [],
         "photo_names": MONTHLY_PHOTOS,  # 背景は締めっぽい写真プールから
+        "pattern": idx,
     }
 
 

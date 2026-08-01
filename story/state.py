@@ -18,6 +18,7 @@ from .config import (
     COOLDOWN_DAYS,
     JST,
     LAST_POST_FILE,
+    MONTHLY_TEXTS_FILE,
     RECENT_TEXTS_FILE,
     USED_PHOTOS_FILE,
 )
@@ -151,3 +152,22 @@ def mark_posted_local(path: str = LAST_POST_FILE) -> None:
         os.replace(tmp, path)
     except Exception as e:
         print(f"last_post.json保存失敗: {e}", file=sys.stderr)
+
+def load_monthly_texts() -> list[dict]:
+    """月初感謝ストーリーの使用文履歴（言い回しの永久被り防止用）。"""
+    try:
+        if os.path.exists(MONTHLY_TEXTS_FILE):
+            with open(MONTHLY_TEXTS_FILE, encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+
+def save_monthly_text(entry: dict) -> None:
+    data = load_monthly_texts()
+    data.append(entry)
+    tmp = MONTHLY_TEXTS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, MONTHLY_TEXTS_FILE)

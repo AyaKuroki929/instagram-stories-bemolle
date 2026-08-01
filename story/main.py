@@ -15,8 +15,39 @@ from .content import generate_monthly_content, generate_content, generate_sunday
 from .images import build_image
 from .notify import notify
 from .publisher import blob_mark_posted, blob_posted_today, get_ig_user_id, post_to_stories
-from .state import mark_posted_local, posted_today_local
+from .state import mark_posted_local, posted_today_local, save_monthly_text
 from .threads import run_threads_story
+
+
+def post_monthly_if_first_day(today: datetime, ig_id: str) -> None:
+    """毎月1日、通常ストーリーの「後」に「先月の感謝＋今月の意気込み」を投稿（2026-08-01彩さん指示）。
+    おはようございます（通常）→ 感謝、の順で並ばせる。月マーカー(Blob・月単位)で月1回だけ。
+    日曜でも実施。通常が投稿済みスキップの日でも、月初が未投稿ならここで後追い投稿する。"""
+    if today.day != 1 or blob_posted_today("monthly"):
+        return
+    try:
+        m_content = generate_monthly_content(today)
+        m_image = build_image(m_content, today)
+        m_id = post_to_stories(ig_id, m_image)
+        print(f"月初の感謝ストーリー投稿完了: media_id={m_id}")
+        try:
+            blob_mark_posted("monthly")
+            print("Blobマーカー更新（monthly）")
+        except Exception as e:
+            print(f"monthlyマーカー書込み失敗: {e}", file=sys.stderr)
+            notify(f"⚠️ @bemolle_diet 月初ストーリー: 投稿成功もマーカー書込み失敗（重複の恐れ）: {e}")
+        try:
+            save_monthly_text({
+                "month": today.strftime("%Y-%m"),
+                "pattern": m_content.get("pattern"),
+                "status": m_content["status"],
+                "closing": m_content["closing"],
+            })  # 言い回しの永久被り防止の履歴（Save stepでコミット）
+        except Exception as e:
+            print(f"月初文履歴の保存失敗: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"月初ストーリー投稿失敗: {e}", file=sys.stderr)
+        notify(f"⚠️ @bemolle_diet 月初の感謝ストーリー投稿に失敗しました\n{e}")
 
 
 def main() -> None:
@@ -38,24 +69,6 @@ def main() -> None:
     # トークン期限管理（自動延長 → 失敗時はLINE警告）
     manage_meta_token()
 
-    # 毎月1日：通常ストーリーの前に「先月の感謝＋今月の意気込み」を投稿（2026-08-01彩さん指示）。
-    # 月マーカー(Blob・月単位)で月1回だけ。日曜でも実施。失敗しても通常ストーリーは止めない。
-    if today.day == 1 and not blob_posted_today("monthly"):
-        try:
-            m_content = generate_monthly_content(today)
-            m_image = build_image(m_content, today)
-            m_id = post_to_stories(ig_id, m_image)
-            print(f"月初の感謝ストーリー投稿完了: media_id={m_id}")
-            try:
-                blob_mark_posted("monthly")
-                print("Blobマーカー更新（monthly）")
-            except Exception as e:
-                print(f"monthlyマーカー書込み失敗: {e}", file=sys.stderr)
-                notify(f"⚠️ @bemolle_diet 月初ストーリー: 投稿成功もマーカー書込み失敗（重複の恐れ）: {e}")
-        except Exception as e:
-            print(f"月初ストーリー失敗（通常投稿は継続）: {e}", file=sys.stderr)
-            notify(f"⚠️ @bemolle_diet 月初の感謝ストーリー投稿に失敗（通常ストーリーは継続します）\n{e}")
-
     # 同日二重投稿防止：自動実行(schedule/repository_dispatch)のみ判定。
     # 手動 workflow_dispatch は意図的な再投稿なので常に通す。
     # 判定は「サロン専用マーカー」＝主砦=Blob(git push非依存)＋副=last_post.json(git)。
@@ -66,6 +79,7 @@ def main() -> None:
     is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
     if not is_manual and (blob_posted_today() or posted_today_local()):
         print("本日のサロンストーリーは投稿済みのためスキップ。")
+        post_monthly_if_first_day(today, ig_id)  # 通常が済んでいても月初が未投稿なら後追い
         return
 
     try:
@@ -103,5 +117,8 @@ def main() -> None:
         notify(f"⚠️ @bemolle_diet ストーリー: 投稿は成功したがBlobマーカー書込みに失敗。\n"
                f"本日のバックアップ実行が二重投稿する恐れ。Actionsを確認してください: {e}")
     mark_posted_local()  # 副：git用マーカー（Save stepでcommit/push）
+
+    # 毎月1日は、通常ストーリーの後に月初の感謝ストーリーを続けて投稿
+    post_monthly_if_first_day(today, ig_id)
 
     print("完了")

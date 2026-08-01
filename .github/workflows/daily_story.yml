@@ -99,6 +99,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add used_photos.json last_post.json
           [ -f recent_texts.json ] && git add recent_texts.json || true
+          [ -f monthly_texts.json ] && git add monthly_texts.json || true
           [ -d fallback_photos ] && git add fallback_photos || true
           git diff --staged --quiet || git commit -m "chore: update used_photos [skip ci]"
           # push失敗＝投稿マーカー喪失＝予備cronが二重投稿する重大事象なのでリトライ＋通知
