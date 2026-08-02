@@ -1,9 +1,4 @@
 {
-  "1NbDRocUfM6yanW0RQRMCl1mu9WgZDM_w": {
-    "ts": "2026-07-19T07:01:25.356978+09:00",
-    "hash": "f8fcf0fcecc4c4ec",
-    "series": "20250112-"
-  },
   "1gPMWLcHC-6R6lABfpzVxFpO_NXOmWBee": {
     "ts": "2026-07-20T07:01:11.190816+09:00",
     "hash": "fffffffee0404060",
@@ -88,5 +83,10 @@
     "ts": "2026-08-02T07:01:09.570059+09:00",
     "hash": "7efeffcfc7c600f8",
     "series": "line_album_2026.03.25研究所視察_260331_"
+  },
+  "1rxGP4BT_u62Vdhb2QebDlzouSncsdRhg": {
+    "ts": "2026-08-03T07:01:03.152122+09:00",
+    "hash": "ffffef2423a03098",
+    "series": "dsc"
   }
 }
