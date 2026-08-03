@@ -353,6 +353,14 @@ def _photo_background(photo_bytes: bytes, W: int, H: int):
     return img, text_main, text_sub, line_color
 
 
+def _course_geometry(n_courses: int):
+    """コース一覧のフォント・行高・上端Y。配置計算と描画の両方がここを使う（二重実装禁止）。"""
+    font = get_font(40)
+    lh = font.getbbox("あ")[3] + 20
+    top = 1920 - 110 - lh * n_courses - 50
+    return font, lh, top
+
+
 # ── 画像生成（1080×1920） ─────────────────────────────────────
 def build_image(content: dict, today: datetime) -> bytes:
     W, H = 1080, 1920
@@ -410,9 +418,18 @@ def build_image(content: dict, today: datetime) -> bytes:
     total = sum(block_height(t, f) for t, f, _ in blocks) + 40 * (len(blocks) - 1)
 
     # 配置候補：上（従来）と下（顔が上部にある写真用）。顔と重なる候補を避ける
-    cand = {"top": 300, "bottom": max(320, 1660 - total)}
-    pref = ["bottom", "top"] if is_lower_pref else ["top", "bottom"]
-    faces = detect_faces(img) or []
+    # 下配置の下限：コース一覧がある日はその上端の40px上まで（本文とコース一覧の衝突防止・2026-08-03実害）
+    bottom_end = 1660
+    if content.get("courses"):
+        _, _, course_top = _course_geometry(len(content["courses"]))
+        bottom_end = course_top - 40
+    cand = {"top": 300}
+    if bottom_end - total >= 320:  # 下に収まらない長文の日は下候補を作らない（境界破り防止・Sol指摘）
+        cand["bottom"] = bottom_end - total
+    pref = [p for p in (["bottom", "top"] if is_lower_pref else ["top", "bottom"]) if p in cand]
+    # 70px未満の「顔」は誤検出（機械のモニタ等）とみなし配置判定に使わない（2026-08-03実害：
+    # 機械画面を顔と誤検出→文字が下に移動→コース一覧と衝突）。本物の顔は最終画像で十分大きい
+    faces = [f for f in (detect_faces(img) or []) if f[2] >= 70 and f[3] >= 70]
 
     def face_overlap(y0: int) -> int:
         r_top, r_bot = y0 - 30, y0 + total + 30
@@ -460,15 +477,11 @@ def build_image(content: dict, today: datetime) -> bytes:
 
     # ── コース一覧（右下）※日曜定休日は非表示 ──
     if content.get("courses"):
-        course_font = get_font(40)
-        lh_c = course_font.getbbox("あ")[3] + 20
+        course_font, lh_c, y_top = _course_geometry(len(content["courses"]))
         right_pad = 80
         max_cw = max(course_font.getbbox(f"・{c}")[2] for c in content["courses"])
         x_left  = W - right_pad - max_cw
         x_right = W - right_pad
-        bottom_margin = 110
-        block_h = lh_c * len(content["courses"])
-        y_top = H - bottom_margin - block_h - 50
         draw.line([(x_left, y_top), (x_right, y_top)], fill=line_color, width=1)
         y_c = y_top + 20
         for course in content["courses"]:
