@@ -15,7 +15,7 @@ from .content import generate_monthly_content, generate_content, generate_sunday
 from .images import build_image
 from .notify import notify
 from .publisher import blob_mark_posted, blob_posted_today, get_ig_user_id, post_to_stories
-from .state import mark_posted_local, posted_today_local, save_monthly_text
+from .state import mark_posted_local, posted_today_local, save_monthly_text, save_recent_text
 from .threads import run_threads_story
 
 
@@ -123,6 +123,8 @@ def main() -> None:
         notify(f"⚠️ @bemolle_diet ストーリー: 投稿は成功したがBlobマーカー書込みに失敗。\n"
                f"本日のバックアップ実行が二重投稿する恐れ。Actionsを確認してください: {e}")
     mark_posted_local()  # 副：git用マーカー（Save stepでcommit/push）
+    # 締め文の履歴は「投稿に成功した文」だけ残す（生成時保存だと失敗日も履歴が進むバグ・Sol指摘2026-08-04）
+    save_recent_text(content["greeting"], content.get("closing", ""), theme=content.get("theme"))
 
     # 毎月1日は、通常ストーリーの後に月初の感謝ストーリーを続けて投稿
     post_monthly_if_first_day(today, ig_id)

@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import sys
 from datetime import datetime
 
 import requests
 
 from .config import ANTHROPIC_KEY, COURSES_FACIAL, COURSES_SLIM, MONTHLY_PHOTOS
-from .state import load_recent_closings, save_recent_text
+from .state import load_recent_closings, load_recent_theme_days
 from .util import claude_text, extract_json
 
 
@@ -253,6 +254,45 @@ def get_weather(hour: int = 7) -> str | None:
         return None
 
 
+# ── 締め候補の選定（3候補から過去と最も遠い1本を選ぶ） ─────────────
+_CLOSING_BAD_WORDS = ("曜日", "月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜",
+                      "皆さん", "報酬", "栄養", "原点")
+
+
+def _bigrams(t: str) -> set[str]:
+    t = re.sub(r"\s", "", t)
+    return {t[i:i + 2] for i in range(len(t) - 1)} or {t}
+
+
+def _pick_closing(cands: list, recent: list[str]) -> str:
+    """3候補を検証し、直近の締めとの文字類似（bigram Dice）が最も低い1本を採用。
+    合格閾値は設けない（必ず1本選ぶ＝投稿を止めない）。スコアはログに出す。"""
+    valid = []
+    for c in cands:
+        c = str(c or "").strip()
+        if not c or len(c) > 70:
+            continue
+        if any(w in c for w in _CLOSING_BAD_WORDS):
+            continue
+        valid.append(c)
+    if not valid:  # 全滅時は空でない先頭候補で投稿を優先
+        valid = [str(c).strip() for c in cands if str(c or "").strip()][:1]
+    if not valid:
+        raise Exception("締めの候補が空")
+    if not recent:
+        return valid[0]
+
+    def max_sim(c: str) -> float:
+        bc = _bigrams(c)
+        return max((2 * len(bc & _bigrams(r)) / max(1, len(bc) + len(_bigrams(r))) for r in recent),
+                   default=0.0)
+
+    scored = sorted((max_sim(c), i, c) for i, c in enumerate(valid))
+    for sc, i, c in scored:
+        print(f"  締め候補{i + 1}: 類似={sc:.2f} {c}")
+    return scored[0][2]
+
+
 # ── 平日コンテンツ生成（Claude Haiku） ───────────────────────────
 def generate_content(today: datetime) -> dict:
     month   = today.month
@@ -311,23 +351,30 @@ def generate_content(today: datetime) -> dict:
     season_label = ""  # 季節は出さない
     weather_line = f"\n今日の大阪の天気：{weather}（7時時点・足元が悪い）" if is_bad_footing else ""
 
+    # 締めの切り口（ID・指示文・重み）。指示文は「方向」だけ示す＝完成文をテーマにすると
+    # 毎回同じ文に収束する（8/4「昨日と今朝がほぼ同じ」の実害。Sol設計レビューで抽象化）
+    THEME_DEFS = [
+        ("thanks",  "ご来店への感謝や気遣いをシンプルに", 35),
+        ("change",  "★お客様の良い変化を喜ぶ気持ち。どんな変化を・どう言うかは自由"
+                    "（表情・雰囲気・声・過ごし方など毎回違う角度で。定型の言い回しにしない・"
+                    "特定の個人の話・数字・誇張にはしない）", 25),
+        ("careful", "今日も一人ひとり丁寧に施術する、という当たり前の気持ち", 20),
+        ("plain",   "お会いできるのを楽しみにしている、それだけを飾らずに", 20),
+    ]
+    NORMAL_THEME_IDS = {t[0] for t in THEME_DEFS}
+
     if is_bad_footing:
+        theme_id = "weather"
         hook_rule = ("② ご来店を心待ちにしている一言。今日は足元が悪いので"
                      "「足元の悪い中ですが、お気をつけてお越しください」のような気遣いを自然に一言"
                      "（季節の言葉は使わない・毎回表現を変える）")
         closing_hint = "心待ちにしている一言（足元への気遣いを含む、1文）"
     else:
-        # 締めの切り口をローテーション（毎日同系統だと定型化するため。★は黒木指定の追加ニュアンス）
-        closing_theme = random.choices(
-            [
-                "ご来店への感謝や気遣いをシンプルに",
-                "★回数を重ねるごとに皆様の表情が明るくなっていくのが嬉しい、という変化への喜び"
-                "（一般的な実感として。特定の個人の話・数字・誇張にはしない）",
-                "今日も一人ひとり丁寧に施術する、という当たり前の気持ち",
-                "お会いできるのを楽しみにしている、それだけを飾らずに",
-            ],
-            weights=[35, 25, 20, 20],
-        )[0]
+        # 直近2日で使った切り口は除外（連続・1日おきの意味被りを防ぐ。Sol設計レビュー2026-08-04）
+        recent_themes = load_recent_theme_days(2, allowed=NORMAL_THEME_IDS)
+        cands = [t for t in THEME_DEFS if t[0] not in recent_themes] or THEME_DEFS
+        theme_id, closing_theme, _w = random.choices(cands, weights=[t[2] for t in cands])[0]
+        print(f"締めの切り口: {theme_id}（直近2日の除外: {sorted(recent_themes)}）")
         hook_rule = ("② ご来店を心待ちにしている一言。天気や季節の話には触れず、"
                      f"今日の切り口＝{closing_theme}。\n"
                      "【AIっぽさ禁止・厳守】\n"
@@ -343,12 +390,18 @@ def generate_content(today: datetime) -> dict:
     recent_closings = load_recent_closings(10)
     avoid_block = ""
     if recent_closings:
-        lst = "\n".join(f"・{g}" for g in recent_closings)
+        yesterday = recent_closings[-1]
+        others = recent_closings[:-1]
         avoid_block = (
-            f"\n\n【最近使った締めの一言＝繰り返さない】\n{lst}\n"
-            "言葉を入れ替えるだけの類似も禁止。文の骨組み（構文・語順・文末）ごと変えること。"
-            "上記に多い「〜が、私たちの〜です」の形は今日は使わない。"
+            f"\n\n【昨日の締め＝意味ごと使用禁止（最重要）】\n・{yesterday}\n"
+            "言い換えての再利用も禁止。昨日と同じ出来事・感情・因果関係を、今日は取り上げないこと。"
         )
+        if others:
+            lst = "\n".join(f"・{g}" for g in others)
+            avoid_block += (
+                f"\n\n【最近の締め（参考・どれにも似せない）】\n{lst}\n"
+                "言葉を入れ替えるだけの類似も禁止。文の骨組み（構文・語順・文末）ごと変えること。"
+            )
 
     prompt = f"""あなたはエステサロン「ベモーレ」（大阪・谷町九丁目）の公式Instagramを運営するライターです。
 今日のInstagramストーリー1枚目の「締めの一言」だけをJSONで出力してください。
@@ -369,18 +422,22 @@ def generate_content(today: datetime) -> dict:
 
 以下のJSONのみ出力（他は不要）：
 {{
-  "closing": "{closing_hint}"
+  "closings": ["{closing_hint}", "2本目（1本目と違う言い回し・違う文型で）", "3本目（さらに別の言い回し・別の文型で）"]
 }}"""
 
-    result = extract_json(claude_text(
+    raw = extract_json(claude_text(
         model="claude-haiku-4-5-20251001",
-        max_tokens=512,
+        max_tokens=700,
         temperature=1,
         messages=[{"role": "user", "content": prompt}],
         api_key=ANTHROPIC_KEY,
     ))
-    result["greeting"] = "おはようございます。"  # 挨拶は固定（事実でない一文の創作を防ぐ）
-    result["status"] = status   # Pythonで決定した文言をそのまま使う（Claude変更禁止）
-    result["courses"] = course_pool
-    save_recent_text(result["greeting"], result.get("closing", ""))  # 締めの連日重複を防ぐ履歴
-    return result
+    cands = raw.get("closings") or ([raw["closing"]] if raw.get("closing") else [])
+    closing = _pick_closing(cands, recent_closings)
+    return {
+        "greeting": "おはようございます。",  # 挨拶は固定（事実でない一文の創作を防ぐ）
+        "status": status,                    # Pythonで決定した文言をそのまま使う（Claude変更禁止）
+        "courses": course_pool,
+        "closing": closing,
+        "theme": theme_id,                   # 履歴保存は投稿成功後にmain.pyで行う（失敗時に履歴が進むバグの修正）
+    }

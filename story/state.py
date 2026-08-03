@@ -108,21 +108,50 @@ def load_recent_closings(n: int = 10) -> list[str]:
     return []
 
 
-def save_recent_text(greeting: str, closing: str = "") -> None:
-    """使った挨拶・締め文を履歴に追記（直近30件保持・workflowがcommitして永続化）。"""
+def save_recent_text(greeting: str, closing: str = "", theme: str | None = None) -> None:
+    """使った挨拶・締め文を履歴に追記（直近30件保持・workflowがcommitして永続化）。
+    theme=締めの切り口ID（連日同テーマ回避用・無い日は省略）。"""
     try:
         data = []
         if os.path.exists(RECENT_TEXTS_FILE):
             with open(RECENT_TEXTS_FILE, encoding="utf-8") as f:
                 data = json.load(f)
-        data.append({"date": datetime.now(JST).date().isoformat(),
-                     "greeting": greeting, "closing": closing})
+        entry = {"date": datetime.now(JST).date().isoformat(),
+                 "greeting": greeting, "closing": closing}
+        if theme:
+            entry["theme"] = theme
+        data.append(entry)
         tmp = RECENT_TEXTS_FILE + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data[-30:], f, ensure_ascii=False, indent=2)
         os.replace(tmp, RECENT_TEXTS_FILE)
     except Exception as e:
         print(f"recent_texts.json保存失敗: {e}", file=sys.stderr)
+
+
+def load_recent_theme_days(k: int = 2, allowed: set[str] | None = None) -> set[str]:
+    """直近k日（テーマ記録のある日ベース）で使った締めテーマIDの集合。
+    allowed を渡すとそのIDだけ数える（日曜・雨天等の特殊テーマを除外するため）。"""
+    try:
+        if not os.path.exists(RECENT_TEXTS_FILE):
+            return set()
+        with open(RECENT_TEXTS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        seen_dates: list[str] = []
+        themes: set[str] = set()
+        for e in reversed(data):
+            t = e.get("theme")
+            if not t or (allowed is not None and t not in allowed):
+                continue
+            d = e.get("date", "")
+            if d not in seen_dates:
+                if len(seen_dates) >= k:
+                    break
+                seen_dates.append(d)
+            themes.add(t)
+        return themes
+    except Exception:
+        return set()
 
 
 # ── 二重投稿防止（idempotency）────────────────────────────────────
