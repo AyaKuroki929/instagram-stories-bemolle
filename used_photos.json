@@ -1,14 +1,4 @@
 {
-  "1YgyoqTlYEBd-mH6RJq85ENVhqQiKstQS": {
-    "ts": "2026-07-22T07:01:17.521937+09:00",
-    "hash": "e7e7f7e3c1e3e3e0",
-    "series": "_r8a"
-  },
-  "1jHYk40pjL5B0fcZqV8912OvKrQ_iYwbA": {
-    "ts": "2026-07-23T07:01:09.130147+09:00",
-    "hash": "bfffff0010381c3e",
-    "series": "line_album_幹細胞研究所視察_260331_"
-  },
   "13UdvyDzR9XriKE1iKSDQBGBCml96EUo3": {
     "ts": "2026-07-24T07:01:21.743697+09:00",
     "hash": "ffc989790183070f",
@@ -103,5 +93,10 @@
     "ts": "2026-08-05T07:01:16.561293+09:00",
     "hash": "ff9e83e3d9c9e3f1",
     "series": "line_album_幹細胞研究所視察_260331_"
+  },
+  "1sCd9J1Jc9X74euBUwAF6kCQpXXk9mTdH": {
+    "ts": "2026-08-06T07:01:22.924722+09:00",
+    "hash": "7d38787d0e7ef9f0",
+    "series": "mur_"
   }
 }
