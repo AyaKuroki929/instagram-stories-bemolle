@@ -11,7 +11,7 @@ from datetime import datetime
 
 from .auth import manage_meta_token
 from .config import JST
-from .content import generate_monthly_content, generate_content, generate_sunday_content
+from .content import generate_dm_info_content, generate_monthly_content, generate_content, generate_sunday_content
 from .images import build_image
 from .notify import notify
 from .publisher import blob_mark_posted, blob_posted_today, get_ig_user_id, post_to_stories
@@ -51,10 +51,45 @@ def post_monthly_if_first_day(today: datetime, ig_id: str, force: bool = False) 
         notify(f"⚠️ @bemolle_diet 月初の感謝ストーリー投稿に失敗しました\n{e}")
 
 
+def run_dm_info() -> None:
+    """DM→公式LINE案内ストーリー（火金20時・2026-08-06彩さん指示）。
+    文言固定・写真は通常プールの重複回避エンジンで選択（前後のストーリーと被らない）。"""
+    today = datetime.now(JST)
+    print(f"[{today.strftime('%Y-%m-%d %H:%M')} JST] DM案内ストーリー開始")
+    try:
+        ig_id = get_ig_user_id()
+    except Exception as e:
+        notify(f"⚠️ @bemolle_diet DM案内ストーリー失敗\nIG ID取得エラー: {e}")
+        sys.exit(1)
+    is_manual = os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch"
+    if not is_manual and blob_posted_today("dminfo"):
+        print("本日のDM案内は投稿済みのためスキップ。")
+        return
+    try:
+        content = generate_dm_info_content()
+        image_bytes = build_image(content, today)
+        media_id = post_to_stories(ig_id, image_bytes)
+        print(f"投稿完了: media_id={media_id}")
+    except Exception as e:
+        print(f"DM案内投稿エラー: {e}", file=sys.stderr)
+        notify(f"⚠️ @bemolle_diet DM案内ストーリー失敗\n{e}")
+        sys.exit(1)
+    try:
+        blob_mark_posted("dminfo")
+        print("Blobマーカー更新（dminfo）")
+    except Exception as e:
+        notify(f"⚠️ @bemolle_diet DM案内: 投稿成功もマーカー書込み失敗（重複の恐れ）: {e}")
+    print("完了")
+
+
 def main() -> None:
     # STORY_MODE=threads ならThreads→ストーリー化を実行（別ワークフロー・8時）
     if os.environ.get("STORY_MODE") == "threads":
         run_threads_story()
+        return
+    # STORY_MODE=dminfo ならDM→公式LINE案内（火金20時）
+    if os.environ.get("STORY_MODE") == "dminfo":
+        run_dm_info()
         return
 
     today = datetime.now(JST)

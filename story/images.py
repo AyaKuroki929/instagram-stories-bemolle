@@ -33,6 +33,8 @@ def get_font(size: int) -> ImageFont.FreeTypeFont:
 # 行頭に置かない文字（約物＋小書き仮名＋長音＋撥音。ん は語頭に来ない＝直前で切ると語中割れ）
 _HEAD_NG = frozenset("、。」』）)！？!?…・%％ーんっゃゅょゎぁぃぅぇぉッャュョヮァィゥェォ")
 _PART = frozenset("をにがはへもとで")  # 折り返してよい助詞
+# この語の内側では改行しない（BudouXが「お問い｜合わせ」等に割るのを防ぐ・2026-08-06実害）
+_KEEP_TOGETHER = ("お問い合わせ", "公式LINE")
 
 
 def _is_kanji(c: str) -> bool:
@@ -145,6 +147,15 @@ def wrapped_lines(text: str, font: ImageFont.FreeTypeFont, max_w: int) -> list[s
                         and all(_is_hira(c) for c in ch) and all(_is_hira(c) for c in nxt_ch)):
                     continue
                 budoux_bounds.add(idx)
+            # 複合語の内側に落ちた境界を除去（お問い合わせ・公式LINE等を1語として扱う）
+            for w in _KEEP_TOGETHER:
+                start = 0
+                while True:
+                    i = sent.find(w, start)
+                    if i < 0:
+                        break
+                    budoux_bounds -= set(range(i + 1, i + len(w)))
+                    start = i + 1
         for k in range(1, n):
             if not _hard_ok(sent, k):
                 continue

@@ -132,6 +132,20 @@ closing: {closing}
     }
 
 
+# ── DM案内ストーリー（火金20時・2026-08-06彩さん指示・固定文）──────────
+def generate_dm_info_content() -> dict:
+    """お問い合わせはDMでなく公式LINEへ、の定期案内。文言は彩さん確定の固定文。
+    写真は通常のプール（共通）から重複回避エンジンで選ぶ＝前後のストーリーと被らない。"""
+    return {
+        "greeting": "",
+        "status": "日々たくさんのお問い合わせのDMをいただきますが、"
+                  "DMでは質問への回答はお受けしておりません。",
+        "closing": "公式LINEよりお問い合わせをお願いいたします。"
+                   "公式LINEはプロフィールのURLからご登録いただけます。",
+        "courses": [],
+    }
+
+
 # ── 日曜定休日コンテンツ生成 ──────────────────────────────────
 def generate_sunday_content(today: datetime) -> dict:
     month  = today.month

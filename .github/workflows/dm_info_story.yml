@@ -1,0 +1,113 @@
+name: DM Info Story - @bemolle_diet
+
+# お問い合わせはDMでなく公式LINEへ、の定期案内（火・金 20:00 JST・2026-08-06彩さん指示）
+on:
+  schedule:
+    - cron: "0 11 * * 2,5"   # 20:00 JST（火・金）
+    - cron: "30 11 * * 2,5"  # 20:30 JST バックアップ（Blobマーカーで二重投稿は防止）
+  workflow_dispatch: {}
+
+permissions:
+  contents: write  # used_photos.json（写真ローテーション履歴）をmainへpushするため
+
+concurrency:
+  group: dm-info-story
+  cancel-in-progress: false
+
+jobs:
+  dm-info:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      # 日本語フォント：キャッシュ優先（通常ネット不要）＋apt高速失敗リトライ（daily_storyと同じ）
+      - name: Cache Japanese font
+        uses: actions/cache@v4
+        with:
+          path: ~/jpfont
+          key: noto-cjk-ttc-v1
+      - name: Install Japanese fonts
+        timeout-minutes: 6
+        run: |
+          DEST=/usr/share/fonts/opentype/noto
+          FONT="$DEST/NotoSansCJK-Regular.ttc"
+          CACHED="$HOME/jpfont/NotoSansCJK-Regular.ttc"
+          sudo mkdir -p "$DEST"
+          if [ -f "$CACHED" ] && [ "$(stat -c%s "$CACHED" 2>/dev/null || echo 0)" -gt 1000000 ]; then
+            echo "font: cache hit"
+            sudo cp "$CACHED" "$FONT"
+          else
+            echo "font: cache miss/invalid → apt"; rm -f "$CACHED" 2>/dev/null || true
+            ok=""
+            for i in 1 2; do
+              if sudo timeout 100 apt-get install -y --no-install-recommends fonts-noto-cjk; then ok=1; break; fi
+              echo "apt install retry $i"; sudo timeout 60 apt-get update || true; sleep $((i*4))
+            done
+            [ -z "$ok" ] && { echo "::error::font install failed after retries"; exit 1; }
+            mkdir -p "$HOME/jpfont"
+            if [ -f "$FONT" ]; then cp "$FONT" "$CACHED"; else
+              f=$(find /usr/share/fonts -iname 'NotoSansCJK*.ttc' | head -1)
+              [ -n "$f" ] && { sudo cp "$f" "$FONT"; cp "$f" "$CACHED"; }
+            fi
+          fi
+          fc-cache -f >/dev/null 2>&1 || true
+          [ -f "$FONT" ] && [ "$(stat -c%s "$FONT" 2>/dev/null || echo 0)" -gt 1000000 ] || { echo "::error::font missing/invalid after install"; exit 1; }
+          echo "font ready"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post DM info story
+        env:
+          STORY_MODE:               dminfo
+          META_ACCESS_TOKEN:        ${{ secrets.META_ACCESS_TOKEN_STORIES }}
+          META_APP_SECRET:          ${{ secrets.META_APP_SECRET }}
+          GH_PAT:                   ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY:        ${{ github.repository }}
+          ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+          IMGBB_API_KEY:            ${{ secrets.IMGBB_API_KEY }}
+          BLOB_READ_WRITE_TOKEN:    ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          GOOGLE_REFRESH_TOKEN:     ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_CLIENT_ID:         ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET:     ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: python post_story.py
+
+      # 写真ローテーション履歴を保存（翌朝のストーリーと写真が被らないための記録）
+      - name: Save photo rotation log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add used_photos.json
+          [ -d fallback_photos ] && git add fallback_photos || true
+          git diff --staged --quiet || git commit -m "chore: update used_photos [skip ci]"
+          ok=""
+          for i in 1 2 3 4 5 6; do
+            git rebase --abort 2>/dev/null || true
+            git fetch origin main -q || true
+            if git pull --rebase origin main && git push; then ok=1; break; fi
+            echo "push失敗 ($i/6) → リトライ"; sleep $((i*3))
+          done
+          git rebase --abort 2>/dev/null || true
+          if [ -z "$ok" ]; then
+            echo "::error::push failed after retries"
+            echo "（写真履歴のみの喪失＝二重投稿にはならないため通知はエラー表示のみ）"
+          fi
+
+      - name: Notify on workflow failure
+        if: failure() || cancelled()
+        run: |
+          if [ -f .line_notified ]; then echo "Python側で通知済み → スキップ"; exit 0; fi
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 DM案内ストーリー（火金20時）のワークフローが失敗しました。GitHub Actionsのログを確認してください。"}]}'
