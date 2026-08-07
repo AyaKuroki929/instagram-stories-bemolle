@@ -293,6 +293,13 @@ def _pick_closing(cands: list, recent: list[str]) -> str:
         valid = [str(c).strip() for c in cands if str(c or "").strip()][:1]
     if not valid:
         raise Exception("締めの候補が空")
+    # 読み手に向かう言葉を含む候補を優先（サロンの状態報告で閉じる文を後回しに・2026-08-08彩さん指摘）
+    reader_words = ("お待ち", "お会い", "お越し", "ご来店", "どうぞ", "楽しみ")
+    reader = [c for c in valid if any(w in c for w in reader_words)]
+    if reader:
+        valid = reader
+    else:
+        print("  ⚠️ 読み手向け表現を含む候補なし（全候補が状態報告型）", file=sys.stderr)
     if not recent:
         return valid[0]
 
@@ -398,7 +405,10 @@ def generate_content(today: datetime) -> dict:
                      "・短く。飾らず、現場でお客様にそのまま言える一言（長い詩的な文にしない）\n"
                      "・主語は省けるなら省く（「皆様が」「お客様が」を毎回付けない。"
                      "誰のことか伝わるなら無い方が自然で、直接その人に届く言葉になる）\n"
-                     "・温かみは残す（事務的な定型だけにはしない）")
+                     "・温かみは残す（事務的な定型だけにはしない）\n"
+                     "・締めは必ず読み手に向けた言葉で文を閉じる（お待ちしています・お会いできるのを"
+                     "楽しみにしています等）。サロンの状態・行動の報告で文を終えない"
+                     "（例：「準備ができています」で終わるのはNG。「準備をしてお待ちしております」ならOK）")
         closing_hint = "心待ちにしている一言（天気・季節に触れない、1文・短く）"
 
     recent_closings = load_recent_closings(10)
