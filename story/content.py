@@ -293,9 +293,10 @@ def _bigrams(t: str) -> set[str]:
     return {t[i:i + 2] for i in range(len(t) - 1)} or {t}
 
 
-def _pick_closing(cands: list, recent: list[str]) -> str:
+def _pick_closing(cands: list, recent: list[str]) -> str | None:
     """3候補を検証し、直近の締めとの文字類似（bigram Dice）が最も低い1本を採用。
-    合格閾値は設けない（必ず1本選ぶ＝投稿を止めない）。スコアはログに出す。"""
+    全候補が検証NGなら None を返す（未検証のまま投稿しない・2026-08-13彩さん指示。
+    呼び出し側で再生成→最終的に安全な固定文へフォールバック）。スコアはログに出す。"""
     valid = []
     for c in cands:
         c = str(c or "").strip()
@@ -313,11 +314,9 @@ def _pick_closing(cands: list, recent: list[str]) -> str:
         if re.search(r"(?<!の)お越しをお待ち", c):
             continue
         valid.append(c)
-    if not valid:  # 全滅時は空でない先頭候補で投稿を優先
-        print("  ⚠️ 全候補が検証NG→未検証の先頭候補で投稿（禁止語が残る可能性）", file=sys.stderr)
-        valid = [str(c).strip() for c in cands if str(c or "").strip()][:1]
-    if not valid:
-        raise Exception("締めの候補が空")
+    if not valid:  # 全滅→未検証の文は絶対に出さない（禁止語「何より」が世に出た実害・2026-08-13）
+        print("  ⚠️ 全候補が検証NG→再生成へ", file=sys.stderr)
+        return None
     # 読み手に向かう言葉を含む候補を優先（サロンの状態報告で閉じる文を後回しに・2026-08-08彩さん指摘）
     reader_words = ("お待ち", "お会い", "お越し", "ご来店", "どうぞ", "楽しみ")
     reader = [c for c in valid if any(w in c for w in reader_words)]
@@ -489,15 +488,24 @@ def generate_content(today: datetime) -> dict:
   "closings": ["{closing_hint}", "2本目（1本目と違う言い回し・違う文型で）", "3本目（さらに別の言い回し・別の文型で）"]
 }}"""
 
-    raw = extract_json(claude_text(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=700,
-        temperature=1,
-        messages=[{"role": "user", "content": prompt}],
-        api_key=ANTHROPIC_KEY,
-    ))
-    cands = raw.get("closings") or ([raw["closing"]] if raw.get("closing") else [])
-    closing = _pick_closing(cands, recent_closings)
+    closing = None
+    for attempt in range(3):  # 全候補NGなら生成し直し（最大2回リトライ）
+        raw = extract_json(claude_text(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=700,
+            temperature=1,
+            messages=[{"role": "user", "content": prompt}],
+            api_key=ANTHROPIC_KEY,
+        ))
+        cands = raw.get("closings") or ([raw["closing"]] if raw.get("closing") else [])
+        closing = _pick_closing(cands, recent_closings)
+        if closing:
+            break
+        print(f"  再生成 {attempt + 1}/2", file=sys.stderr)
+    if not closing:
+        # それでも全滅なら安全な固定文（禁止語が世に出る経路をゼロに・2026-08-13彩さん承認の文面）
+        closing = "皆様のお越しを心よりお待ちしております。"
+        print("  ⚠️ 3回全滅→固定文で投稿", file=sys.stderr)
     return {
         "greeting": "おはようございます。",  # 挨拶は固定（事実でない一文の創作を防ぐ）
         "status": status,                    # Pythonで決定した文言をそのまま使う（Claude変更禁止）
