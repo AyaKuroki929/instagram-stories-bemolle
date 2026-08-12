@@ -219,7 +219,8 @@ def generate_sunday_content(today: datetime) -> dict:
 
 # ── 大阪の天気取得（Open-Meteo・APIキー不要） ────────────────────
 def get_weather(hour: int = 7) -> str | None:
-    """大阪（谷町九丁目）の指定時刻の天気を日本語で返す。失敗時はNone。"""
+    """大阪（谷町九丁目）の「今の実況」天気を日本語で返す。失敗時はNone。
+    予報の時刻枠は見ない（7時の予報が雨でも実際は止んでいるズレの実害・2026-08-13彩さん指示）。"""
     WMO = {
         0: "快晴",
         1: "晴れ",
@@ -252,7 +253,7 @@ def get_weather(hour: int = 7) -> str | None:
             params={
                 "latitude": 34.665,
                 "longitude": 135.521,
-                "hourly": "temperature_2m,weathercode",
+                "current_weather": True,
                 "timezone": "Asia/Tokyo",
                 "forecast_days": 1,
             },
@@ -260,10 +261,10 @@ def get_weather(hour: int = 7) -> str | None:
         )
         r.raise_for_status()
         data = r.json()
-        code = data["hourly"]["weathercode"][hour]
-        temp = round(data["hourly"]["temperature_2m"][hour])
+        code = data["current_weather"]["weathercode"]
+        temp = round(data["current_weather"]["temperature"])
         desc = WMO.get(code, "曇り")
-        print(f"天気: {desc}・{temp}℃（{hour}時・大阪）")
+        print(f"天気: {desc}・{temp}℃（実況・大阪）")
         return f"{desc}・{temp}℃"
     except Exception as e:
         print(f"天気取得失敗（スキップ）: {e}", file=sys.stderr)
@@ -380,13 +381,13 @@ def generate_content(today: datetime) -> dict:
         print("STORY_FORCE_FACIAL_TRIAL=1 → ご新規＋肌質改善体験で固定")
 
     # 平日は季節に触れない。天気も基本触れず、大雨など足元が悪い日だけ気遣いを入れる。
-    weather = get_weather(hour=7)
+    weather = get_weather()  # 実況
     # 足元が悪い天気（雨・雪・雷・霰。ただし小雨・小雪は除く）
     is_bad_footing = bool(weather) and any(k in weather for k in ("雨", "雪", "雷", "霰")) \
         and "小雨" not in weather and "小雪" not in weather
 
     season_label = ""  # 季節は出さない
-    weather_line = f"\n今日の大阪の天気：{weather}（7時時点・足元が悪い）" if is_bad_footing else ""
+    weather_line = ""  # 足元が悪い日は締めを固定文にするためプロンプトには渡さない
 
     # 締めの切り口（ID・指示文・重み）。指示文は「方向」だけ示す＝完成文をテーマにすると
     # 毎回同じ文に収束する（8/4「昨日と今朝がほぼ同じ」の実害。Sol設計レビューで抽象化）
@@ -402,33 +403,39 @@ def generate_content(today: datetime) -> dict:
     NORMAL_THEME_IDS = {t[0] for t in THEME_DEFS}
 
     if is_bad_footing:
-        theme_id = "weather"
-        hook_rule = ("② ご来店を心待ちにしている一言。今日は足元が悪いので"
-                     "「足元の悪い中ですが、お気をつけてお越しください」のような気遣いを自然に一言"
-                     "（季節の言葉は使わない・毎回表現を変える）")
-        closing_hint = "心待ちにしている一言（足元への気遣いを含む、1文）"
-    else:
-        # 直近2日で使った切り口は除外（連続・1日おきの意味被りを防ぐ。Sol設計レビュー2026-08-04）
-        recent_themes = load_recent_theme_days(2, allowed=NORMAL_THEME_IDS)
-        cands = [t for t in THEME_DEFS if t[0] not in recent_themes] or THEME_DEFS
-        theme_id, closing_theme, _w = random.choices(cands, weights=[t[2] for t in cands])[0]
-        print(f"締めの切り口: {theme_id}（直近2日の除外: {sorted(recent_themes)}）")
-        hook_rule = ("② ご来店を心待ちにしている一言。天気や季節の話には触れず、"
-                     f"今日の切り口＝{closing_theme}。\n"
-                     "【AIっぽさ禁止・厳守】\n"
-                     "・「皆様が〜している姿（様子・こと・時間）が、私たちの〜です」という構文は使わない"
-                     "（毎日この骨組みで言葉だけ替わるのが一番AIっぽい）\n"
-                     "・大げさな言葉禁止：報酬・栄養・原点・誇り・何より・一番の・最高の・かけがえのない\n"
-                     "・短く。飾らず、現場でお客様にそのまま言える一言（長い詩的な文にしない）\n"
-                     "・主語は省けるなら省く（「皆様が」「お客様が」を毎回付けない。"
-                     "誰のことか伝わるなら無い方が自然で、直接その人に届く言葉になる）\n"
-                     "・温かみは残す（事務的な定型だけにはしない）\n"
-                     "・締めは必ず読み手に向けた言葉で文を閉じる（お待ちしています・お会いできるのを"
-                     "楽しみにしています等）。サロンの状態・行動の報告で文を終えない"
-                     "（例：「準備ができています」で終わるのはNG。「準備をしてお待ちしております」ならOK）\n"
-                     "・奇をてらわない。日常でお客様にそのまま言う言葉の範囲で書く\n"
-                     "・同じ言葉を1つの文の中で繰り返さない（「感じるたび…感じます」等）")
-        closing_hint = "心待ちにしている一言（天気・季節に触れない、1文・短く）"
+        # 足元が悪い日はAI生成せず固定文（生成させると「滑りやすい路面」等の
+        # 報道調・AIぽい言い回しになる実害・2026-08-13彩さん指示）
+        kind = "雪" if "雪" in weather else "雨"
+        fixed_closing = f"{kind}で足元が悪いので、お気をつけてお越しください。"
+        print(f"締め: 固定文（足元が悪い日・{weather}）")
+        return {
+            "greeting": "おはようございます。",
+            "status": status,
+            "courses": course_pool,
+            "closing": fixed_closing,
+            "theme": "weather",
+        }
+    # 直近2日で使った切り口は除外（連続・1日おきの意味被りを防ぐ。Sol設計レビュー2026-08-04）
+    recent_themes = load_recent_theme_days(2, allowed=NORMAL_THEME_IDS)
+    cands = [t for t in THEME_DEFS if t[0] not in recent_themes] or THEME_DEFS
+    theme_id, closing_theme, _w = random.choices(cands, weights=[t[2] for t in cands])[0]
+    print(f"締めの切り口: {theme_id}（直近2日の除外: {sorted(recent_themes)}）")
+    hook_rule = ("② ご来店を心待ちにしている一言。天気や季節の話には触れず、"
+                 f"今日の切り口＝{closing_theme}。\n"
+                 "【AIっぽさ禁止・厳守】\n"
+                 "・「皆様が〜している姿（様子・こと・時間）が、私たちの〜です」という構文は使わない"
+                 "（毎日この骨組みで言葉だけ替わるのが一番AIっぽい）\n"
+                 "・大げさな言葉禁止：報酬・栄養・原点・誇り・何より・一番の・最高の・かけがえのない\n"
+                 "・短く。飾らず、現場でお客様にそのまま言える一言（長い詩的な文にしない）\n"
+                 "・主語は省けるなら省く（「皆様が」「お客様が」を毎回付けない。"
+                 "誰のことか伝わるなら無い方が自然で、直接その人に届く言葉になる）\n"
+                 "・温かみは残す（事務的な定型だけにはしない）\n"
+                 "・締めは必ず読み手に向けた言葉で文を閉じる（お待ちしています・お会いできるのを"
+                 "楽しみにしています等）。サロンの状態・行動の報告で文を終えない"
+                 "（例：「準備ができています」で終わるのはNG。「準備をしてお待ちしております」ならOK）\n"
+                 "・奇をてらわない。日常でお客様にそのまま言う言葉の範囲で書く\n"
+                 "・同じ言葉を1つの文の中で繰り返さない（「感じるたび…感じます」等）")
+    closing_hint = "心待ちにしている一言（天気・季節に触れない、1文・短く）"
 
     recent_closings = load_recent_closings(10)
     avoid_block = ""
