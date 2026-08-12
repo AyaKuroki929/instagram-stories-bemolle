@@ -1,9 +1,4 @@
 {
-  "1fRMlDf8Lg57aFlgHrF4ascAu1u64S7sP": {
-    "ts": "2026-07-30T07:01:21.880282+09:00",
-    "hash": "f7e7f7e3e3e1e000",
-    "series": "lp_"
-  },
   "1FutP2g1gpwrrmL_nIZnfhuHIbA1y-3IO": {
     "ts": "2026-07-31T07:06:16.612842+09:00",
     "hash": "ffcb89f92103070f",
@@ -118,5 +113,10 @@
     "ts": "2026-08-13T07:01:07.215205+09:00",
     "hash": "0f0f1efcfc9fefff",
     "series": ""
+  },
+  "1BH8gJEgvS_mdz5Rlq6_DAPXbomzkqZJa": {
+    "ts": "2026-08-13T07:38:01.276095+09:00",
+    "hash": "ffffffc080ffffff",
+    "series": "139a"
   }
 }
