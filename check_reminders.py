@@ -23,7 +23,7 @@ from datetime import date
 
 import personal_reminder as pr
 
-VALID_SLOTS = {"early", "morning", "evening"}
+VALID_SLOTS = {"early", "morning", "evening19", "evening"}
 VALID_TYPES = {"once", "monthly"}
 
 
@@ -115,7 +115,7 @@ def main() -> int:
         return 1
 
     once = sum(1 for r in reminders if r.get("type") == "once")
-    ev = sum(1 for r in reminders if r.get("slot") == "evening")
+    ev = sum(1 for r in reminders if r.get("slot") in ("evening19", "evening"))
     print(f"✅ リマインダー自己点検OK（全{len(reminders)}件／単発{once}件／夜スロット{ev}件）")
     print("   形式・予定日の発火条件・DRY_RUNの非破壊性 を確認しました")
     return 0
