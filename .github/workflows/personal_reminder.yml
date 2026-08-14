@@ -6,6 +6,8 @@ on:
     - cron: "40 22 * * *" # 保険（7:40 JST）
     - cron: "0 0 * * *"   # 毎日 9:00 JST（slot未指定＝morning のリマインド）
     - cron: "40 0 * * *"  # 保険（9:40 JST）。送信済みは reminder_state.json で重複防止
+    - cron: "0 10 * * *"  # 毎日 19:00 JST（slot: evening19 のリマインド）
+    - cron: "40 10 * * *" # 保険（19:40 JST）
     - cron: "0 11 * * *"  # 毎日 20:00 JST（slot: evening のリマインド）
     - cron: "40 11 * * *" # 保険（20:40 JST）
   workflow_dispatch:       # 手動実行（テストは DRY_RUN で）

@@ -43,8 +43,8 @@ def _today() -> date:
 
 
 def _now_slot() -> str:
-    """今どの時間帯の実行か。early=7:00/7:40 → morning=9:00/9:40 → evening=20:00/20:40 (JST)。
-    境界はcron遅延に耐えるよう広めに取る（8時台まではearly扱い・16時台まではmorning扱い）。
+    """今どの時間帯の実行か。early=7:00/7:40 → morning=9:00/9:40 → evening19=19:00/19:40 → evening=20:00/20:40 (JST)。
+    境界はcron遅延に耐えるよう広めに取る（8時台まではearly扱い・16時台まではmorning扱い・19時台まではevening19扱い）。
     それ以上ずれた場合はその回は送られず、翌日の取りこぼし検知🚨が拾う。"""
     override = os.environ.get("REMINDER_SLOT_OVERRIDE", "")
     if override:
@@ -54,6 +54,8 @@ def _now_slot() -> str:
         return "early"
     if h < 17:
         return "morning"
+    if h < 20:
+        return "evening19"
     return "evening"
 
 
