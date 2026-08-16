@@ -1,14 +1,4 @@
 {
-  "1IRDf3usFQp6gP4-ZSgJ7jyevjVWZ-fYY": {
-    "ts": "2026-08-02T07:01:09.570059+09:00",
-    "hash": "7efeffcfc7c600f8",
-    "series": "line_album_2026.03.25研究所視察_260331_"
-  },
-  "1rxGP4BT_u62Vdhb2QebDlzouSncsdRhg": {
-    "ts": "2026-08-03T07:01:03.152122+09:00",
-    "hash": "ffffef2423a03098",
-    "series": "dsc"
-  },
   "1bd9akccmTh-_vR12AuiumvydedrqfGp5": {
     "ts": "2026-08-03T10:27:50.949784+09:00",
     "hash": "ffefe7f7c3c3c7c0",
@@ -138,5 +128,10 @@
     "ts": "2026-08-16T07:01:00.236889+09:00",
     "hash": "e3c3c7f3f3df4e07",
     "series": "補正済み"
+  },
+  "1LMjmBh-2O6A25JRIT-RtYqMrQkuUyAfl": {
+    "ts": "2026-08-17T07:01:11.536709+09:00",
+    "hash": "193c79f9e3e7df3f",
+    "series": "mur_"
   }
 }
