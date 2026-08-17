@@ -65,8 +65,45 @@ def fetch_media(oldest_month: str) -> list[dict]:
     return items
 
 
+def print_followers() -> None:
+    """現在フォロワー数と、権限があれば直近30日の日次新規フォロワーも出す。"""
+    r = requests.get(
+        f"{META_API}/{IG_USER}",
+        params={"fields": "followers_count", "access_token": TOKEN},
+        timeout=30,
+    )
+    if r.ok:
+        print(f"フォロワー現在値: {r.json().get('followers_count')}名")
+    else:
+        print(f"フォロワー取得失敗: {r.status_code} {r.text[:150]}")
+
+    # 日次の新規フォロワー（APIの仕様上、直近30日まで）
+    now = datetime.now(JST)
+    since = (now - timedelta(days=29)).strftime("%Y-%m-%d")
+    r = requests.get(
+        f"{META_API}/{IG_USER}/insights",
+        params={
+            "metric": "follower_count", "period": "day",
+            "since": since, "until": now.strftime("%Y-%m-%d"),
+            "access_token": TOKEN,
+        },
+        timeout=30,
+    )
+    if not r.ok:
+        print(f"日次フォロワーinsights不可: {r.status_code} {r.text[:150]}")
+        return
+    monthly: Counter = Counter()
+    for v in (r.json().get("data") or [{}])[0].get("values", []):
+        d = v.get("end_time", "")[:10]
+        monthly[d[:7]] += int(v.get("value") or 0)
+    for month, n in sorted(monthly.items()):
+        print(f"[{month}] 新規フォロワー(30日窓内): +{n}名")
+
+
 def main() -> None:
     months = target_months(sys.argv[1] if len(sys.argv) > 1 else "")
+    print_followers()
+    print()
     media = fetch_media(min(months))
 
     print(f"取得メディア総数: {len(media)}件（新しい順・対象月まで遡及）\n")

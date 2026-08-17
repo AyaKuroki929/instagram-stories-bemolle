@@ -1,0 +1,61 @@
+name: Followers Log - IGフォロワー数の日次記録
+
+# グルコン月次レポートの「フォロワー増加数」を出すための記録係。
+# 毎日23:50 JST（14:50 UTC）に followers_count を followers_log.json へ追記してコミットする。
+# Macが閉じていてもGitHubのクラウドで動く。
+on:
+  schedule:
+    - cron: "50 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: followers-log
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install requests -q
+
+      - name: Record followers count
+        env:
+          META_ACCESS_TOKEN: ${{ secrets.META_ACCESS_TOKEN_STORIES }}
+        run: python followers_log.py
+
+      - name: Commit log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add followers_log.json
+          git diff --staged --quiet && exit 0
+          git commit -m "chore: update followers_log [skip ci]"
+          ok=""
+          for i in 1 2 3; do
+            git rebase --abort 2>/dev/null || true
+            git fetch origin main -q || true
+            if git pull --rebase origin main && git push; then ok=1; break; fi
+            echo "push失敗 ($i/3) → リトライ"; sleep $((i*3))
+          done
+          git rebase --abort 2>/dev/null || true
+          [ -n "$ok" ] || { echo "::error::followers_log push failed"; exit 1; }
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST https://api.line.me/v2/bot/message/broadcast \
+            -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{"messages":[{"type":"text","text":"🚨 IGフォロワー日次記録(followers_log)が失敗しました。GitHub Actionsを確認してください。"}]}' || true
