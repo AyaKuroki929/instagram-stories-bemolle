@@ -1,4 +1,4 @@
-name: Weekly GBP Post (LINEへ貼るだけ配信)
+name: GBP自動投稿（成功時は無音・失敗時のみLINE）
 
 on:
   schedule:
