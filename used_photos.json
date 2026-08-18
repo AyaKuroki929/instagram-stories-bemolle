@@ -1,19 +1,4 @@
 {
-  "1_uuYhKtwBPF1b7ayeOAbGtXlVF-FMjOF": {
-    "ts": "2026-08-04T07:01:15.624049+09:00",
-    "hash": "27273f3f73272720",
-    "series": "imgl"
-  },
-  "1hZAy7CPB9SkHlfP0GpVS76LFkBMcX8sC": {
-    "ts": "2026-08-04T08:02:12.225597+09:00",
-    "hash": "83070f0f1fd1f1f1",
-    "series": "line_album_幹細胞研究所視察_260331_"
-  },
-  "1gSZbNyKxq4alucYFZCr8LiOdhPG6_ZC9": {
-    "ts": "2026-08-04T08:04:07.722787+09:00",
-    "hash": "82fef2fefefeee86",
-    "series": "dsc"
-  },
   "1V-KEg9ZA_kFq-3FuixsiAoTLWznwWqI5": {
     "ts": "2026-08-05T07:01:16.561293+09:00",
     "hash": "ff9e83e3d9c9e3f1",
@@ -133,5 +118,10 @@
     "ts": "2026-08-18T07:01:06.053131+09:00",
     "hash": "ffffff9721010383",
     "series": "dsc"
+  },
+  "1-5-o82xPobYa9LBUvt9pvqSICY2UKc1L": {
+    "ts": "2026-08-18T20:19:45.366155+09:00",
+    "hash": "e7e7e7e7070f0f0c",
+    "series": "139a"
   }
 }
