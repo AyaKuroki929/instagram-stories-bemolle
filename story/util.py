@@ -80,7 +80,8 @@ def message_text(message) -> str:
 
 
 def claude_text(*, model: str, max_tokens: int, messages: list, api_key: str = "", **kwargs) -> str:
-    """Claudeを呼び出してテキスト応答を返す（system / temperature 等は kwargs で渡す）。"""
+    """Claudeを呼び出してテキスト応答を返す（system 等は kwargs で渡す。
+    ⚠️ temperature は SDK 1.0.0 で廃止済み・渡すと TypeError）。"""
     client = anthropic.Anthropic(api_key=api_key or os.environ["ANTHROPIC_API_KEY"])
     msg = client.messages.create(model=model, max_tokens=max_tokens, messages=messages, **kwargs)
     return message_text(msg)

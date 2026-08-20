@@ -1,4 +1,4 @@
-anthropic>=0.30.0
+anthropic>=1.0.0,<2  # メジャー更新の自動取り込み禁止（1.0.0でtemperature廃止→朝ストーリー停止 2026-08-21）
 Pillow>=10.0.0
 requests>=2.31.0
 pynacl>=1.5.0

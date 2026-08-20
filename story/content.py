@@ -104,7 +104,6 @@ closing: {closing}
             result = extract_json(claude_text(
                 model="claude-haiku-4-5-20251001",
                 max_tokens=512,
-                temperature=1,
                 messages=[{"role": "user", "content": prompt}],
                 api_key=ANTHROPIC_KEY,
             ))
@@ -205,7 +204,6 @@ def generate_sunday_content(today: datetime) -> dict:
     result = extract_json(claude_text(
         model="claude-haiku-4-5-20251001",
         max_tokens=512,
-        temperature=1,
         messages=[{"role": "user", "content": prompt}],
         api_key=ANTHROPIC_KEY,
     ))
@@ -493,7 +491,6 @@ def generate_content(today: datetime) -> dict:
         raw = extract_json(claude_text(
             model="claude-haiku-4-5-20251001",
             max_tokens=700,
-            temperature=1,
             messages=[{"role": "user", "content": prompt}],
             api_key=ANTHROPIC_KEY,
         ))
