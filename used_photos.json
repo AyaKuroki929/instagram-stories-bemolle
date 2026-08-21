@@ -1,9 +1,4 @@
 {
-  "17JORNht4XfEMBIlU5nu9K_Aw4HEbC5fm": {
-    "ts": "2026-08-07T20:40:51.917417+09:00",
-    "hash": "fefcbffb717070c0",
-    "series": "line_album_2026.03.25研究所視察_260331_"
-  },
   "12SCpRSqCNNtSf5AL_BPh5uI5ut4Rxol1": {
     "ts": "2026-08-08T07:01:15.400224+09:00",
     "hash": "87f7b7818382c091",
@@ -128,5 +123,10 @@
     "ts": "2026-08-21T20:20:07.457351+09:00",
     "hash": "3e7effcfc7c60018",
     "series": "line_album_2026.03.25研究所視察_260331_"
+  },
+  "1laJhsO3L_tLx7V-X9oCJ7EaJCAAt03zC": {
+    "ts": "2026-08-22T07:01:01.281755+09:00",
+    "hash": "80c6cf8fa3bb8383",
+    "series": "line_album_幹細胞研究所視察_260331_"
   }
 }
