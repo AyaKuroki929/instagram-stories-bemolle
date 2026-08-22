@@ -4,7 +4,7 @@ C=os.path.dirname(os.path.abspath(__file__))
 RL="/Users/ayakuroki/Library/CloudStorage/GoogleDrive-nailsalon.flat@gmail.com/マイドライブ/リール"
 body=os.path.join(C,"body_final.mp4")
 cta1=os.path.join(C,"cta1.mp4"); cta2=os.path.join(C,"cta2.mp4")
-bgm=os.path.join(RL,"BGM_ElegantSanctuary.mp3")
+bgm=os.path.join(RL,"CTA・BGM","BGM_ElegantSanctuary.mp3")
 se_flash=os.path.join(RL,"SE","SE_インパクト(フラッシュ).mp3")
 se_kira=os.path.join(RL,"SE","SE_キラーン(金文字).mp3")
 voice=os.path.join(C,"vo4_paced.wav")

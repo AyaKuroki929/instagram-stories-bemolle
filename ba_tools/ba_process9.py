@@ -63,7 +63,7 @@ def clean_alpha(rgba):
     return Image.merge("RGBA", (r, g, b, al))
 
 
-def process_one(path):
+def process_one(path, cut_y=None):
     up = load_upright(path)
     rgba = clean_alpha(remove(up, session=SESS).convert("RGBA"))
     arr = np.array(rgba)
@@ -79,8 +79,11 @@ def process_one(path):
     chin = mouth_y + face_h * 0.8
     sh = min(Y(11), Y(12))                 # 肩
     heel = max(Y(29), Y(30), Y(31), Y(32)) # かかと
-    neck_cut = chin + (sh - chin) * NECK_FRAC
-    neck_cut = min(neck_cut, sh)           # 念のため肩より下げない
+    if cut_y is not None:
+        neck_cut = float(cut_y)            # 外部指定（B案=肩の丸みの真上・ba_shoulder_cut.detect_cut）
+    else:
+        neck_cut = chin + (sh - chin) * NECK_FRAC
+        neck_cut = min(neck_cut, sh)       # 念のため肩より下げない
     ref = heel - sh                        # 肩-かかと=身体倍率の基準
 
     a = arr[:, :, 3]
@@ -108,27 +111,31 @@ def match_color(after, before):
     return Image.fromarray(arr.astype("uint8"))
 
 
-def compose(body, aspect):
+def compose(body, aspect, fit_scale=1.0):
     """body(首〜足)を、指定アスペクトのキャンバスへ。高さいっぱい・足元下寄せ。
-    枠より広ければ左右中央クロップ、狭ければ左右bg余白。透明=ページ背景が出る。"""
+    fit_scale<1 のときは体を縮小して腕(手)まで枠に収め、余白は上に出す。"""
     bw, bh = body.size
-    inner_h = bh
-    canvas_h = int(round(inner_h * (1 + TOP_PAD + BOT_PAD)))
+    canvas_h = int(round(bh * (1 + TOP_PAD + BOT_PAD)))     # 枠の高さは縮小しても変えない
     canvas_w = int(round(canvas_h * aspect))
     canvas = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
-    y = int(round(canvas_h * TOP_PAD))
-    x = (canvas_w - bw) // 2                # 負ならクロップ・正ならbg余白
-    canvas.alpha_composite(body, (x, y))
+    if fit_scale < 1.0:
+        body = body.resize((max(1, int(bw * fit_scale)), max(1, int(bh * fit_scale))))
+        bw, bh = body.size
+    y = int(round(canvas_h * (1 - BOT_PAD))) - bh            # 足元を下端(BOT_PAD)に合わせる
+    x = (canvas_w - bw) // 2
+    canvas.alpha_composite(body, (x, max(0, y)))
     return canvas
 
 
-def build(before_path, after_path, out, neck_frac=None):
-    """before/after写真→4枚の枠別head-off PNG。生成パスのdictを返す。"""
+def build(before_path, after_path, out, neck_frac=None, cuts=None, fit_width=False):
+    """before/after写真→4枚の枠別head-off PNG。生成パスのdictを返す。
+    cuts={"b":y,"a":y} を渡すとB案の切り位置（肩の丸みの真上）で切る。"""
     if neck_frac is not None:
         globals()["NECK_FRAC"] = neck_frac
     os.makedirs(out, exist_ok=True)
-    before, rb = process_one(before_path)
-    after, ra = process_one(after_path)
+    cb = (cuts or {}).get("b"); ca = (cuts or {}).get("a")
+    before, rb = process_one(before_path, cut_y=cb)
+    after, ra = process_one(after_path, cut_y=ca)
     before = before.resize((max(1, int(before.width * T / rb)), max(1, int(before.height * T / rb))))
     after = after.resize((max(1, int(after.width * T / ra)), max(1, int(after.height * T / ra))))
     after = match_color(after, before)
@@ -136,7 +143,12 @@ def build(before_path, after_path, out, neck_frac=None):
     for key, aspect in FRAMES.items():
         src = before if key.startswith("b_") else after
         p = os.path.join(out, key + ".png")
-        compose(src, aspect).save(p)
+        fs = 1.0
+        if fit_width:      # 手(腕の先)まで収める共通縮小率＝before/afterで厳しい方に揃える
+            sb = (before.height * (1 + TOP_PAD + BOT_PAD) * aspect) / before.width
+            sa = (after.height * (1 + TOP_PAD + BOT_PAD) * aspect) / after.width
+            fs = min(1.0, sb, sa)
+        compose(src, aspect, fs).save(p)
         paths[key] = p
     return paths
 

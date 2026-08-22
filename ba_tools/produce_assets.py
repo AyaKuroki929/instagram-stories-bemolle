@@ -84,10 +84,19 @@ def main():
     ap.add_argument("--after", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--neck", type=float, default=0.45)
+    ap.add_argument("--auto-cut", action="store_true",
+                    help="B案：肩の丸みの真上で切る（ba_shoulder_cut.detect_cut を使用・推奨）")
     a = ap.parse_args()
 
     import ba_process9
-    paths = ba_process9.build(a.before, a.after, a.out, a.neck)
+    cuts = None
+    if a.auto_cut:
+        from ba_shoulder_cut import detect_cut
+        cb = detect_cut(a.before, debug_out=a.out, tag="B")
+        ca = detect_cut(a.after, debug_out=a.out, tag="A")
+        cuts = {"b": cb["cut"], "a": ca["cut"]}
+        print(f"[cut] B={cb['cut']} A={ca['cut']}（肩の丸みの真上）", file=sys.stderr)
+    paths = ba_process9.build(a.before, a.after, a.out, a.neck, cuts=cuts)
     print("[process] 4枚生成", list(paths), file=sys.stderr)
 
     at = get_access_token()
